@@ -225,7 +225,7 @@ class NetworkStatus:
         
     def get_central_status(self):
         """获取中枢状态"""
-        if not self.json_data or not self.get_ping_status():
+        if not self.json_data:
             return "错误", COLOR_YELLOW, "ERR", COLOR_YELLOW
             
         status = self.json_data.get("status", -1)

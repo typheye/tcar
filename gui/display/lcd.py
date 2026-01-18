@@ -40,6 +40,10 @@ class LCDController:
     def show_image(self, image, x=0, y=0):
         """显示图像"""
         self.device.ShowImage(image, x, y)
+
+    def show_image_fast(self, image, cam_fps=0, disp_fps=0):
+        """显示图像"""
+        self.device.ShowImageFast(image, cam_fps=cam_fps, disp_fps=disp_fps)
         
     def show_logo(self):
         """显示启动Logo"""

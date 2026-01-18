@@ -18,7 +18,7 @@ class LauncherManager:
         
     def show_main_launcher(self):
         """显示主菜单"""
-        menu_items = ["车辆自检", "重启中枢", "云台控制", "相机画面"]
+        menu_items = ["车辆自检", "云台控制"]
         current_index = 0
         
         while True:
@@ -39,17 +39,9 @@ class LauncherManager:
                         car_test = CarTest(self.display, self.buttons, self.wifi_manager, self.system_info, self.power_monitor)
                         car_test.show_main_ui()
                     elif current_index == 1:
-                        from funs.carReboot import CarReboot
-                        car_reboot = CarReboot(self.display, self.buttons, self.wifi_manager, self.system_info, self.power_monitor)
-                        car_reboot.show_main_ui()
-                    elif current_index == 2:
                         from funs.ptzOpera import PTZOpera
                         ptz_opera = PTZOpera(self.display, self.buttons, self.wifi_manager, self.system_info, self.power_monitor)
                         ptz_opera.show_main_ui()
-                    elif current_index == 3:
-                        from funs.camFrame import CamFrame
-                        cam_frame = CamFrame(self.display, self.buttons, self.wifi_manager, self.system_info, self.power_monitor)
-                        cam_frame.show_main_ui()
                 
                 current_index = self.buttons.navigate_menu(current_index, len(menu_items))
                 
