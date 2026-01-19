@@ -30,7 +30,7 @@ class ST7789(object):
         
         # 初始化SPI - 尝试最高速度
         self._spi = spi
-        self._spi.max_speed_hz = 80000000  # 尝试80MHz
+        self._spi.max_speed_hz = 62000000  # 尝试62MHz
         self._spi.mode = 0b00
         
         # 预分配内存
@@ -344,9 +344,27 @@ class ST7789(object):
         
     def clear(self):
         """清屏"""
-        buffer = [0x00] * (self.width * self.height * 2)
-        self.SetWindows(0, 0, self.width, self.height)
-        GPIO.output(self._dc, GPIO.HIGH)
-        
-        for i in range(0, len(buffer), 4096):
-            self._spi.writebytes(buffer[i:i+4096])
+        try:
+            # 1. 关闭显示
+            self.command(0x28)  # DISPOFF
+            
+            # 2. 等待一小段时间
+            time.sleep(0.005)  # 5ms
+            
+            # 3. 执行清屏
+            buffer = [0x00] * (self.width * self.height * 2)
+            self.SetWindows(0, 0, self.width, self.height)
+            GPIO.output(self._dc, GPIO.HIGH)
+            
+            for i in range(0, len(buffer), 4096):
+                self._spi.writebytes(buffer[i:i+4096])
+            
+            # 4. 重新打开显示
+            time.sleep(0.005)  # 5ms
+            self.command(0x29)  # DISPON
+        except Exception as e:
+            print(f"清屏错误: {e}")
+            # 回退方案：直接发送命令
+            self.command(0x2C)  # RAMWR命令
+            GPIO.output(self._dc, GPIO.HIGH)
+            self._spi.writebytes([0x00, 0x00] * 100)  # 发送少量数据

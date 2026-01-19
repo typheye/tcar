@@ -3,12 +3,14 @@
 
 import time
 import RPi.GPIO as GPIO
+from system.power import PowerManager
 import spidev as SPI  # 添加SPI导入
 from PIL import Image, ImageDraw
 from hardware.st7789 import ST7789
 from config import *
 from display.graphics import Graphics
 from display.fonts import fonts
+from utils import press_key, wait_release, wait_press, log
 
 class LCDController:
     def __init__(self, device):
@@ -30,6 +32,7 @@ class LCDController:
             def __exit__(self, exc_type, exc_val, exc_tb):
                 self.lcd.device.ShowImage(self.image, 0, 0)
                 self.lcd.current_image = self.image
+                pass
 
         return Canvas(self)
     
@@ -55,7 +58,6 @@ class LCDController:
                 canvas.draw.bitmap((0, 0), img, fill=None)
             except Exception as e:
                 pass
-        time.sleep(3)
         
     def show_startup_animation(self):
         """显示启动动画"""
@@ -65,7 +67,37 @@ class LCDController:
             w, h = canvas.draw.textsize(text, font=fonts.get_font('title'))
             canvas.draw.text(((SCREEN_WIDTH - w) // 2, (SCREEN_HEIGHT - h) // 2), 
                            text, font=fonts.get_font('title'), fill=COLOR_WHITE)
-        time.sleep(2)
+        time.sleep(1)
+
+    def show_error(self, err=""):
+        """显示错误页"""
+        with self.create_canvas() as canvas:
+            canvas.draw.rectangle((0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), fill=COLOR_BLACK)
+            text = ":) Error Occurred"
+            w, h = canvas.draw.textsize(text, font=fonts.get_font('title'))
+            canvas.draw.text((5, 5), 
+                           text, font=fonts.get_font('title'), fill=COLOR_WHITE)
+            import datetime
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            text = f"There are some errors present.\nTime: {current_time}"
+            canvas.draw.text((35, h + 8), 
+                           text, font=fonts.get_font('small'), fill=COLOR_WHITE)
+            canvas.draw.rectangle((5, 80, SCREEN_WIDTH - 5, 40 + 170), fill=COLOR_WHITE)
+            canvas.draw.text((10, h + 50), 
+                           err, font=fonts.get_font('normal'), fill=COLOR_BLACK)
+            
+            text = "Tips:  Press [KEY3] to reboot system now."
+            canvas.draw.text((5, 220), 
+                           text, font=fonts.get_font('small'), fill=COLOR_WHITE)
+            canvas.draw.line((5, 236, SCREEN_WIDTH - 5, 236), 
+                            fill=COLOR_WHITE, width=2)
+            
+            if wait_press(cancel_PIN):
+                wait_release(cancel_PIN)
+                self.clear()
+                log(3, "系统重启中...")
+                time.sleep(2)
+                PowerManager.reboot()
 
 class DisplayManager:
     def __init__(self):
@@ -94,6 +126,9 @@ class DisplayManager:
     def get_backlight(self):
         """获取当前背光级别"""
         return self.backlight_level
+    
+    def get_device(self):
+        return self.device
         
     def cleanup(self):
         """清理资源"""
