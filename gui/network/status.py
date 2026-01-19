@@ -111,27 +111,31 @@ class NetworkStatus:
         return "ERR", COLOR_YELLOW
     
     def _get_camera_status(self ):
-        if not self.have_funtion8:
-            if self.core_status:
-                self.have_funtion8 = True
-                rpc_client.load_function(8)
-        result = rpc_client.heartbeat()
+        if self.core_status:
+            if not self.have_funtion8:
+                if self.core_status:
+                    self.have_funtion8 = True
+                    rpc_client.load_function(8)
+            result = rpc_client.heartbeat()
 
-        try:
-            # 检查是否成功调用
-            if result.get("success"):
-                # 检查返回数据格式
-                result_data = result.get("result")
-                if result_data and isinstance(result_data, list):
-                    # 第一个元素是True表示心跳正常
-                    self.camera_status = bool(result_data[0])
+            try:
+                # 检查是否成功调用
+                if result.get("success"):
+                    # 检查返回数据格式
+                    result_data = result.get("result")
+                    if result_data and isinstance(result_data, list):
+                        # 第一个元素是True表示心跳正常
+                        self.camera_status = bool(result_data[0])
+                    else:
+                        self.camera_status = False
                 else:
                     self.camera_status = False
-            else:
+            except (AttributeError, KeyError, TypeError, IndexError):
+                # 如果result不是字典或格式不对
                 self.camera_status = False
-        except (AttributeError, KeyError, TypeError, IndexError):
-            # 如果result不是字典或格式不对
+        else:
             self.camera_status = False
+            self.have_funtion8 = False
 
     def _get_core_battery(self):
         """获取主机电池信息"""

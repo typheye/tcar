@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-SYS_MODE = 1    # 0: Debug Mode | 1: User Mode
+SYS_MODE = 1   # 0: Debug Mode | 1: User Mode
 
 # 屏幕尺寸
 SCREEN_WIDTH = 240
@@ -50,7 +50,7 @@ device_pin = 0
 
 # 字体路径
 FONT_NORMAL = "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"
-FONT_MONO = "/usr/share/fonts/truetype/droid/DejaVuSans.ttf"
+FONT_MONO = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_BOLD = "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf"
 
 # INA219地址
