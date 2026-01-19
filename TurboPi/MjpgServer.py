@@ -21,7 +21,7 @@ from io import StringIO, BytesIO
 
 
 img_show = None
-quality = (int(cv2.IMWRITE_JPEG_QUALITY), 70)
+quality = (int(cv2.IMWRITE_JPEG_QUALITY), 60)
 
 class MJPG_Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -54,7 +54,7 @@ class MJPG_Handler(BaseHTTPRequestHandler):
                         self.wfile.write('--boundarydonotcross\r\n'.encode())
                         self.end_headers()
                         self.wfile.write(jpg_bytes)
-                    time.sleep(0.05)
+                    time.sleep(0.02)
                 except Exception as e:
                     print(e,"EE")
                     break
