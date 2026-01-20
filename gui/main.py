@@ -13,6 +13,7 @@ from network.status import NetworkStatus
 from system.info import SystemInfo
 from ui.screens import ScreenManager
 from bootloader import Bootloader
+from recovery import Recovery
 from config import *
 
 
@@ -43,6 +44,7 @@ class TypheyeSystem:
 
             # 初始化Bootloader
             self.bootloader = Bootloader(self.display.get_device())
+            self.recovery = Recovery(self.display.get_device(), self.bootloader)
 
             # 初始化管理器
             self.wifi_manager = WiFiManager()
@@ -95,11 +97,20 @@ class TypheyeSystem:
                         if press_time > 800: 
                             enter_bootloader = True
                             pass
+
                     time.sleep(0.01)  # 避免CPU占用过高
+
+            if SYS_MODE == 2:
+                enter_bootloader = True
 
             if enter_bootloader:
                 while True:
-                    self.bootloader.show_main()
+                    flag = self.bootloader.get_flag()
+                    if flag == "BOOTLOADER":
+                        self.bootloader.show_main()
+                    elif flag == "RECOVERY":
+                        self.recovery.show_main()
+                    time.sleep(0.01)  # 防止错误循环过快
             else:
                 if SYS_MODE == 1:
                     # 显示启动画面
@@ -116,9 +127,8 @@ class TypheyeSystem:
                         break
                     except Exception as e:
                         log(4, "主循环错误:", str(e))
-                        self.display.lcd.show_error(err=str(e))
                         traceback.print_exc()
-                        time.sleep(0.01)  # 防止错误循环过快
+                        time.sleep(1)  # 防止错误循环过快
 
         except Exception as e:
             log(4, "系统运行错误:", str(e))

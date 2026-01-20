@@ -13,19 +13,14 @@ from display.fonts import fonts
 from utils import press_key, wait_release, wait_press, log
 
 
-class Bootloader:
-    PRODUCT_NAME = "tcarone"
-    VERSION = ""
-    VERSION_BOOTLOADER = "TCARONEV1.0"
-    VERSION_BASEBAND = "N/A"
-    UNLOCKED = "no"
-    def __init__(self, device):
+class Recovery:
+    def __init__(self, device, bootloader):
         self.device = device
+        self.bootloader = bootloader
         self.canvas = None
         self.current_image = None
-        self.menus = ["Reboot", "Reboot to recovery", "Reboot to bootloader"]
+        self.menus = ["reboot system now", "reboot to bootloader"]
         self.menus_index = 0
-        self.flag = "BOOTLOADER"
 
     def create_canvas(self):
         """创建画布上下文管理器"""
@@ -61,33 +56,27 @@ class Bootloader:
         self.device.ShowImageFast(image, cam_fps=cam_fps, disp_fps=disp_fps)
 
     def show_main(self):
-        """显示BOOTLOADER页"""
+        """显示RECOVERY页"""
         with self.create_canvas() as canvas:
             canvas.draw.rectangle((0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), fill=COLOR_BLACK)
-            text = "FASTBOOT MENU"
-            w, h = canvas.draw.textsize(text, font=fonts.get_font("normal"))
-            canvas.draw.text(
-                ((SCREEN_WIDTH - w) // 2, 15),
-                text,
-                font=fonts.get_font("normal"),
-                fill=COLOR_WHITE,
-            )
 
+            text = f"TCARONE Recovery v1.0"
+            w, h = canvas.draw.textsize(text, font=fonts.get_font("small"))
+            canvas.draw.text((15, 15), 
+                           text, font=fonts.get_font('small'), fill=COLOR_WHITE)
+            
+            y = 30 + ( 2 + self.menus_index ) * h + self.menus_index * 5
+            canvas.draw.rectangle((0, y, SCREEN_WIDTH, y + h), fill=COLOR_BLUE)
+            
+            for i in range(len(self.menus)):
+                menu = "- " + self.menus[i]
+                canvas.draw.text((15, 30 + ( 2 + i ) * h + i * 5), 
+                            menu, font=fonts.get_font('small'), fill=COLOR_BLUE if i != self.menus_index else COLOR_WHITE)
+            
             text = "select:\nshort press the button\ncontinue:\nshort press the button"
-            canvas.draw.text(
-                (15, h + 30), text, font=fonts.get_font("small"), fill=COLOR_WHITE
-            )
-
-            menu = self.menus[self.menus_index]
-            canvas.draw.text(
-                (15, h + 100), menu, font=fonts.get_font("small"), fill=COLOR_RED
-            )
-
-            info = f"product_name:{Bootloader.PRODUCT_NAME}\nversion:{Bootloader.VERSION}\nversion-bootloader:{Bootloader.VERSION_BOOTLOADER}\nversion-baseband:{Bootloader.VERSION_BASEBAND}\nunlocked:{Bootloader.UNLOCKED}"
-            canvas.draw.text(
-                (15, h + 130), info, font=fonts.get_font("small"), fill=COLOR_WHITE
-            )
-
+            canvas.draw.text((15, 160), 
+                           text, font=fonts.get_font('small'), fill=COLOR_WHITE)
+            
             # 处理按键
             if press_key(main_PIN):
                 press_time = wait_release(main_PIN)
@@ -95,6 +84,8 @@ class Bootloader:
                     self.key_press()
                 else:
                     self.switch_menu()
+        
+                
 
     def switch_menu(self):
         if self.menus_index < len(self.menus) - 1:
@@ -109,16 +100,6 @@ class Bootloader:
             time.sleep(2)
             PowerManager.reboot()
         elif self.menus_index == 1:
-            self.set_flag("RECOVERY")
+            self.bootloader.set_flag("BOOTLOADER")
             self.clear()
             time.sleep(1)
-        elif self.menus_index == 2:
-            self.menus_index = 0
-            self.clear()
-            time.sleep(1)
-
-    def get_flag(self):
-        return self.flag
-    
-    def set_flag(self, flag):
-        self.flag = flag

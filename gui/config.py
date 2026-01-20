@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-SYS_MODE = 1   # 0: Debug Mode | 1: User Mode
+SYS_MODE = 1   # 0: Debug Mode | 1: User Mode | 2: Fastboot Mode
 
 # 屏幕尺寸
 SCREEN_WIDTH = 240
