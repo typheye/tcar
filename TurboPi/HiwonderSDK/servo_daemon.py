@@ -80,11 +80,21 @@ class ServoDaemon:
         current = self.positions.get(servo_id, self.calibration[servo_id])
         new_pos = current + step
         
-        # 限制范围 (500-2000)
-        if new_pos < 500:
-            new_pos = 500
-        elif new_pos > 2500:
-            new_pos = 2500
+        s1_max =  self.calibration[1] + 300
+        s1_min = self.calibration[1] - 700
+        s2_max =  self.calibration[2] + 700
+        s2_min = self.calibration[2] - 700
+
+        if servo_id == 1:
+            if new_pos < s1_min:
+                new_pos = s1_min
+            elif new_pos > s1_max:
+                new_pos = s1_max
+        elif servo_id == 2:
+            if new_pos < s2_min:
+                new_pos = s2_min
+            elif new_pos > s2_max:
+                new_pos = s2_max
         
         if new_pos != current:
             try:
