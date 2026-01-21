@@ -91,11 +91,8 @@ def exit():
 
 # 设置蜂鸣器
 def setBuzzer(timer):
-    Board.setBuzzer(0)
-    Board.setBuzzer(1)
-    time.sleep(timer)
-    Board.setBuzzer(0)
-
+    pass
+    
 # 关闭电机
 def car_stop():
     car.set_velocity(0,90,0) # 控制机器人移动函数,线速度0(0~100)，方向角90(0~360)，偏航角速度0(-2~2)

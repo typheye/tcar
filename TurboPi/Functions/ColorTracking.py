@@ -68,10 +68,7 @@ range_rgb = {
 
 # 设置蜂鸣器
 def setBuzzer(timer):
-    Board.setBuzzer(0)
-    Board.setBuzzer(1)
-    time.sleep(timer)
-    Board.setBuzzer(0)
+    pass
 
 # 关闭电机
 def car_stop():

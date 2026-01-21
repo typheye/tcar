@@ -48,10 +48,7 @@ def initMove():
 
 # 设置蜂鸣器
 def setBuzzer(timer):
-    Board.setBuzzer(0)
-    Board.setBuzzer(1)
-    time.sleep(timer)
-    Board.setBuzzer(0)
+    pass
 
 range_rgb = {
     'red': (0, 0, 255),

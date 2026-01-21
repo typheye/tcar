@@ -11,11 +11,18 @@ import threading
 import RPCServer
 import MjpgServer
 import numpy as np
+import subprocess
+import signal
+import atexit
+import Utils.buzzer as BZ
 import HiwonderSDK.Sonar as Sonar
 import HiwonderSDK.Board as Board
 import Functions.Running as Running
 import Functions.Avoidance as Avoidance
 import Functions.RemoteControl as RemoteControl
+
+PS_CONTROLLER_PROC = None  # PS2控制器进程
+RUNNING = True  # 全局运行标志
 
 # TurboPi主程序
 
@@ -28,11 +35,45 @@ HWSONAR = Sonar.Sonar() #超声波传感器
 QUEUE_RPC = queue.Queue(10)
 
 def setBuzzer(timer):
-    Board.setBuzzer(0)
-    Board.setBuzzer(1)
-    time.sleep(timer)
-    Board.setBuzzer(0)
+    BZ.init()
+
+def cleanup():
+    """清理资源"""
+    global PS_CONTROLLER_PROC, RUNNING
     
+    RUNNING = False
+    print("正在清理资源...")
+    
+    # 终止PS2控制器进程
+    if PS_CONTROLLER_PROC and PS_CONTROLLER_PROC.poll() is None:
+        try:
+            print("正在终止PS2控制器...")
+            # 先尝试优雅终止
+            PS_CONTROLLER_PROC.terminate()
+            
+            # 等待最多3秒
+            for _ in range(30):
+                if PS_CONTROLLER_PROC.poll() is not None:
+                    break
+                time.sleep(0.1)
+            
+            # 如果还在运行，强制终止
+            if PS_CONTROLLER_PROC.poll() is None:
+                PS_CONTROLLER_PROC.kill()
+                PS_CONTROLLER_PROC.wait()
+                
+            print("PS2控制器已终止")
+        except Exception as e:
+            print(f"终止PS2控制器时出错: {e}")
+    
+    # 清理Board资源
+    try:
+        Board.setBuzzer(0)
+    except:
+        pass
+    
+    print("资源清理完成")
+
 voltage = 0.0
 
 def voltageDetection():
@@ -41,7 +82,7 @@ def voltageDetection():
     dat = []
     previous_time = 0.00
     try:
-        while True:
+        while RUNNING:  # 添加运行条件
             if time.time() >= previous_time + 1.00 :
                 previous_time = time.time()
                 volt = Board.getBattery()/1000.0
@@ -71,8 +112,10 @@ VD.start()
 
 def startTruckPi():
     global HWEXT, HWSONIC
-    global voltage
+    global voltage, RUNNING
     
+    BZ.init()
+
     previous_time = 0.00
     # 超声波开启后默认关闭灯
     HWSONAR.setRGBMode(0)
@@ -93,11 +136,14 @@ def startTruckPi():
     threading.Thread(target=MjpgServer.startMjpgServer,
                      daemon=True).start()  # mjpg流服务器
     
+    # 启动PS2控制器
+    startPSControler()
+    
     loading_picture = cv2.imread('/home/pi/MiniPi/CameraCalibration/loading.jpg')
     cam = Camera.Camera()  # 相机读取
     Running.cam = cam
 
-    while True:
+    while RUNNING:  # 使用RUNNING标志控制循环
         
         time.sleep(0.03)
         # 执行需要在本线程中执行的RPC命令
@@ -131,9 +177,97 @@ def startTruckPi():
                 MjpgServer.img_show = cam.frame
                 
         except KeyboardInterrupt:
-            print('RunningFunc1', Running.RunningFunc)
+            print('收到键盘中断')
             break
+        except Exception as e:
+            print(f"主循环错误: {e}")
+            time.sleep(0.1)  # 防止错误循环占用CPU
+    
+    print("主循环退出，开始清理...")
+    cleanup()
+
+def startPSControler():
+    """在新线程中启动PS2控制器"""
+    global PS_CONTROLLER_PROC, RUNNING
+    
+    def run_ps_controller():
+        global PS_CONTROLLER_PROC, RUNNING
+        try:
+            print("正在启动PS2控制器...")
+            # 启动PS2控制器
+            PS_CONTROLLER_PROC = subprocess.Popen(
+                ["python3", "/home/pi/TurboPi/PSControler.py"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            print(f"PS2控制器已启动，PID: {PS_CONTROLLER_PROC.pid}")
+            
+            # 监控子进程，同时检查RUNNING标志
+            while RUNNING and PS_CONTROLLER_PROC.poll() is None:
+                # 非阻塞读取输出，避免死锁
+                try:
+                    line = PS_CONTROLLER_PROC.stdout.readline()
+                    if line:
+                        print(f"[PS2控制器] {line.strip()}")
+                except:
+                    pass
+                
+                try:
+                    err_line = PS_CONTROLLER_PROC.stderr.readline()
+                    if err_line:
+                        print(f"[PS2控制器错误] {err_line.strip()}")
+                except:
+                    pass
+                
+                time.sleep(0.1)  # 短暂休眠
+            
+            # 如果RUNNING为False，需要终止子进程
+            if not RUNNING and PS_CONTROLLER_PROC.poll() is None:
+                print("正在终止PS2控制器...")
+                PS_CONTROLLER_PROC.terminate()
+                time.sleep(0.5)
+                if PS_CONTROLLER_PROC.poll() is None:
+                    PS_CONTROLLER_PROC.kill()
+            
+            # 确保进程完全结束
+            PS_CONTROLLER_PROC.wait(timeout=2)
+            
+            print("PS2控制器线程退出")
+        except Exception as e:
+            print(f"PS2控制器线程错误: {e}")
+    
+    # 在新线程中运行
+    ps_thread = threading.Thread(target=run_ps_controller, daemon=True)
+    ps_thread.start()
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.ERROR)
-    startTruckPi()
+    
+    def signal_handler(signum, frame):
+        """信号处理函数"""
+        global RUNNING
+        print(f"\n收到信号 {signum}，准备退出...")
+        RUNNING = False
+    
+    # 注册信号处理器
+    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # systemctl stop
+    
+    # 注册退出时的清理函数
+    atexit.register(cleanup)
+    
+    try:
+        startTruckPi()
+    except KeyboardInterrupt:
+        print("主程序被键盘中断")
+    except Exception as e:
+        print(f"主程序异常: {e}")
+    finally:
+        # 确保清理函数被调用
+        cleanup()
+    
+    print("TurboPi程序正常退出")
+    sys.exit(0)

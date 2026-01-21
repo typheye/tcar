@@ -10,8 +10,8 @@ echo     Raspberry Pi Debug
 echo     IP: %IP%
 echo     ========================================================
 echo.
-echo     1. Update ^& Reboot   2. SSH Terminal    3. Update Only
-echo     4. Reboot Only       5. Change IP       6. Exit
+echo     1. Update ^& Reset    2. SSH Terminal    3. Update Only
+echo     4. Reboot            5. Change IP       6. Exit
 echo.
 echo     ========================================================
 echo.
@@ -34,9 +34,9 @@ if !errorlevel! neq 0 (
     pause
     goto menu
 )
-echo [2/2] Rebooting Raspberry Pi...
-ssh pi@%IP% "sudo reboot"
-echo [SUCCESS] Reboot command sent.
+echo [2/2] Reseting Raspberry Pi...
+ssh pi@%IP% "sudo systemctl stop turbopi.service && sudo systemctl start turbopi.service"
+echo [SUCCESS] Reset command sent.
 pause
 goto menu
 

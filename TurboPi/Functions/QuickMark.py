@@ -44,10 +44,7 @@ def initMove():
 
 # 设置蜂鸣器
 def setBuzzer(timer):
-    Board.setBuzzer(0)
-    Board.setBuzzer(1)
-    time.sleep(timer)
-    Board.setBuzzer(0)
+    pass
 
 # 变量重置
 def reset(): 
