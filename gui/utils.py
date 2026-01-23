@@ -100,13 +100,13 @@ def get_core_info():
     if get_core_status():
         try:
             # SSH连接信息
-            ssh_prefix = "ssh -o ConnectTimeout=5 -o BatchMode=yes pi@192.168.166.100"
+            ssh_prefix = "ssh -o ConnectTimeout=1 -o BatchMode=yes pi@192.168.166.100"
             
             def ssh_exec(cmd):
                 """执行SSH命令并返回结果"""
                 full_cmd = f'{ssh_prefix} "{cmd}"'
                 try:
-                    return subprocess.check_output(full_cmd, shell=True, stderr=subprocess.DEVNULL, timeout=10).decode("utf-8").strip()
+                    return subprocess.check_output(full_cmd, shell=True, stderr=subprocess.DEVNULL, timeout=0.5).decode("utf-8").strip()
                 except:
                     return ""
             

@@ -155,7 +155,7 @@ class NetworkStatus:
                     shell=True,
                     capture_output=True,
                     text=True,
-                    timeout=2  # 设置2秒超时
+                    timeout=0.5  # 设置0.5秒超时
                 )
                 
                 # 解析JSON输出

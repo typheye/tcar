@@ -142,7 +142,7 @@ class CarRPC:
                 self.base_url,
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=5
+                timeout=2
             )
             
             # 检查响应状态
