@@ -24,23 +24,26 @@ def Stop(signum, frame):
     print('Closing...')
 
 #先将所有灯关闭 Turn off all the lights
-Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 0))
-Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 0))
-Board.RGB.show()
+# Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 0))
+# Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 0))
+# Board.RGB.show()
+        pass
 
 signal.signal(signal.SIGINT, Stop)
 
 while True:
     #设置2个灯为红色 Set two RGB lights as red 
-    Board.RGB.setPixelColor(0, Board.PixelColor(255, 0, 0))
-    Board.RGB.setPixelColor(1, Board.PixelColor(255, 0, 0))
-    Board.RGB.show()
+    # Board.RGB.setPixelColor(0, Board.PixelColor(255, 0, 0))
+    # Board.RGB.setPixelColor(1, Board.PixelColor(255, 0, 0))
+    # Board.RGB.show()
+
     time.sleep(1)
 
     if not start:
         #所有灯关闭 Turn off all lights
-        Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 0))
-        Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 0))
-        Board.RGB.show()
+        # Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 0))
+        # Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 0))
+        # Board.RGB.show()
+
         print('Closed')
         break

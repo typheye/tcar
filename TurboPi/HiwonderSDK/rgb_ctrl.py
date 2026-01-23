@@ -31,9 +31,10 @@ class RGBController:
     
     def turn_off(self):
         """关闭所有RGB灯"""
-        Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 0))
-        Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 0))
-        Board.RGB.show()
+        # Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 0))
+        # Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 0))
+        # Board.RGB.show()
+        pass
         print('RGB灯已关闭')
     
     def turn_on(self):
@@ -44,30 +45,34 @@ class RGBController:
         try:
             while self.running:
                 # 红色
-                Board.RGB.setPixelColor(0, Board.PixelColor(255, 0, 0))
-                Board.RGB.setPixelColor(1, Board.PixelColor(255, 0, 0))
-                Board.RGB.show()
+                # Board.RGB.setPixelColor(0, Board.PixelColor(255, 0, 0))
+                # Board.RGB.setPixelColor(1, Board.PixelColor(255, 0, 0))
+                # Board.RGB.show()
+                pass
                 time.sleep(1)
                 if not self.running: break
                 
                 # 绿色
-                Board.RGB.setPixelColor(0, Board.PixelColor(0, 255, 0))
-                Board.RGB.setPixelColor(1, Board.PixelColor(0, 255, 0))
-                Board.RGB.show()
+                # Board.RGB.setPixelColor(0, Board.PixelColor(0, 255, 0))
+                # Board.RGB.setPixelColor(1, Board.PixelColor(0, 255, 0))
+                # Board.RGB.show()
+                pass
                 time.sleep(1)
                 if not self.running: break
                 
                 # 蓝色
-                Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 255))
-                Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 255))
-                Board.RGB.show()
+                # Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 255))
+                # Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 255))
+                # Board.RGB.show()
+                pass
                 time.sleep(1)
                 if not self.running: break
                 
                 # 黄色
-                Board.RGB.setPixelColor(0, Board.PixelColor(255, 255, 0))
-                Board.RGB.setPixelColor(1, Board.PixelColor(255, 255, 0))
-                Board.RGB.show()
+                # Board.RGB.setPixelColor(0, Board.PixelColor(255, 255, 0))
+                # Board.RGB.setPixelColor(1, Board.PixelColor(255, 255, 0))
+                # Board.RGB.show()
+                pass
                 time.sleep(1)
             
             # 退出时关闭灯光
@@ -79,9 +84,10 @@ class RGBController:
     
     def set_color(self, r, g, b):
         """设置固定颜色"""
-        Board.RGB.setPixelColor(0, Board.PixelColor(r, g, b))
-        Board.RGB.setPixelColor(1, Board.PixelColor(r, g, b))
-        Board.RGB.show()
+        # Board.RGB.setPixelColor(0, Board.PixelColor(r, g, b))
+        # Board.RGB.setPixelColor(1, Board.PixelColor(r, g, b))
+        # Board.RGB.show()
+        pass
         print(f'RGB灯设置为: R={r}, G={g}, B={b}')
 
 def parse_arguments():
@@ -118,8 +124,9 @@ def main():
             r, g, b = map(int, args.color.split(','))
             if args.single:
                 # 只控制第一个灯
-                Board.RGB.setPixelColor(0, Board.PixelColor(r, g, b))
-                Board.RGB.show()
+                # Board.RGB.setPixelColor(0, Board.PixelColor(r, g, b))
+                # Board.RGB.show()
+        pass
                 print(f'单RGB灯设置为: R={r}, G={g}, B={b}')
             else:
                 controller.set_color(r, g, b)

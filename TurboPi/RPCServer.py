@@ -141,16 +141,16 @@ def SetSonarRGBMode(mode = 0):
     return (True, (mode,), 'SetSonarRGBMode')
 
 # 设置超声波rgb灯颜色
-@dispatcher.add_method
-def SetSonarRGB(index, r, g, b):
-    global HWSONAR
-    print((r,g,b))
-    if index == 0:
-        HWSONAR.setPixelColor(0, Board.PixelColor(r, g, b))
-        HWSONAR.setPixelColor(1, Board.PixelColor(r, g, b))
-    else:
-        HWSONAR.setPixelColor(index, (r, g, b))
-    return (True, (r, g, b), 'SetSonarRGB')
+# @dispatcher.add_method
+# def SetSonarRGB(index, r, g, b):
+#     global HWSONAR
+#     print((r,g,b))
+#     if index == 0:
+#         HWSONAR.setPixelColor(0, Board.PixelColor(r, g, b))
+#         HWSONAR.setPixelColor(1, Board.PixelColor(r, g, b))
+#     else:
+#         HWSONAR.setPixelColor(index, (r, g, b))
+#     return (True, (r, g, b), 'SetSonarRGB')
 
 # 设置超声波闪烁的颜色和周期
 @dispatcher.add_method

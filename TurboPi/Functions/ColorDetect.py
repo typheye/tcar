@@ -119,21 +119,25 @@ def setTargetColor(color):
 #设置扩展板的RGB灯颜色使其跟要追踪的颜色一致
 def set_rgb(color):
     if color == "red":
-        Board.RGB.setPixelColor(0, Board.PixelColor(255, 0, 0))
-        Board.RGB.setPixelColor(1, Board.PixelColor(255, 0, 0))
-        Board.RGB.show()
+        # Board.RGB.setPixelColor(0, Board.PixelColor(255, 0, 0))
+        # Board.RGB.setPixelColor(1, Board.PixelColor(255, 0, 0))
+        # Board.RGB.show()
+        pass
     elif color == "green":
-        Board.RGB.setPixelColor(0, Board.PixelColor(0, 255, 0))
-        Board.RGB.setPixelColor(1, Board.PixelColor(0, 255, 0))
-        Board.RGB.show()
+        # Board.RGB.setPixelColor(0, Board.PixelColor(0, 255, 0))
+        # Board.RGB.setPixelColor(1, Board.PixelColor(0, 255, 0))
+        # Board.RGB.show()
+        pass
     elif color == "blue":
-        Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 255))
-        Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 255))
-        Board.RGB.show()
+        # Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 255))
+        # Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 255))
+        # Board.RGB.show()
+        pass
     else:
-        Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 0))
-        Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 0))
-        Board.RGB.show()
+        # Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 0))
+        # Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 0))
+        # Board.RGB.show()
+        pass
 
 # 找出面积最大的轮廓
 # 参数为要比较的轮廓的列表

@@ -141,6 +141,10 @@ def startTruckPi():
     
     loading_picture = cv2.imread('/home/pi/MiniPi/CameraCalibration/loading.jpg')
     cam = Camera.Camera()  # 相机读取
+    
+    cam.camera_close()
+    cam.camera_open()
+
     Running.cam = cam
 
     while RUNNING:  # 使用RUNNING标志控制循环
@@ -165,7 +169,7 @@ def startTruckPi():
                     if Running.RunningFunc == 9:
                         MjpgServer.img_show = np.vstack((img, frame))
                     elif Running.RunningFunc == 8:
-                        MjpgServer.img_show = cv2.putText(img, "", (420, 460), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,0), 2)
+                        MjpgServer.img_show = cam.frame
                     else:
                         if voltage <= 7.2: 
                             MjpgServer.img_show = cv2.putText(img, "Voltage:%.1fV"%voltage, (420, 460), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,255), 2)
@@ -174,7 +178,7 @@ def startTruckPi():
                 else:
                     MjpgServer.img_show = loading_picture
             else:
-                MjpgServer.img_show = cam.frame
+                MjpgServer.img_show = loading_picture
                 
         except KeyboardInterrupt:
             print('收到键盘中断')

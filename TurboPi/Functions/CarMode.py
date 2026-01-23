@@ -10,19 +10,19 @@ def reset():
     return None
 
 def exit():
-    print("RemoteControl Exit")
+    print("CarMode Exit")
     return None
 
 def start():
-    print("RemoteControl Start")
+    print("CarMode Start")
     return None
 
 def init():
-    print("RemoteControl Init")
+    print("CarMode Init")
     return None
 
 def stop():
-    print("RemoteControl Stop")
+    print("CarMode Stop")
     return None
 
 def run(img):

@@ -97,23 +97,6 @@ class ChassisController:
         yaw = normalized * self.max_yaw_rate
         return yaw
     
-    def calculate_direction_angle(self, x, y):
-        """根据摇杆坐标计算方向角（0~360度）"""
-        if x == 0 and y == 0:
-            return 0
-        
-        # 计算角度（弧度）
-        angle_rad = math.atan2(y, x)
-        
-        # 转换为角度（0~360度）
-        angle_deg = math.degrees(angle_rad)
-        
-        # 调整到0~360范围
-        if angle_deg < 0:
-            angle_deg += 360
-        
-        return angle_deg
-    
     def control_chassis(self, left_x, left_y):
         """控制小车底盘"""
         if self.chassis is None:
@@ -124,25 +107,28 @@ class ChassisController:
                 print(f"模拟小车: 速度={speed:.1f}, 方向={direction}")
             return
         
-        # 计算线速度（基于左摇杆上下）
-        linear_speed = 0
-        if abs(left_y) > self.deadzone:
-            linear_speed = self.map_joystick_to_velocity(abs(left_y))
-            # 前进/后退方向
-            direction = 90 if left_y < 0 else 270  # 前进=90度，后退=270度
-        else:
-            direction = 0
-            linear_speed = 0
-        
-        # 计算偏航角速度（基于左摇杆左右）
         yaw_rate = 0
-        if abs(left_x) > self.deadzone:
-            linear_speed = self.map_joystick_to_velocity(abs(left_x))
-            yaw_rate = 0
-            direction = 0 if left_x < 0 else 180  # 左转=0度，右转=180度
+        linear_speed = 0
+
+        if abs(left_y) > abs(left_x):
+        
+            # 计算线速度（基于左摇杆上下）
+            if abs(left_y) > self.deadzone:
+                linear_speed = self.map_joystick_to_velocity(abs(left_y))
+                direction = 90 if left_y < 0 else 270  # 前进=90度，后退=270度
+            else:
+                direction = 0
+                linear_speed = 0
+        
         else:
-            direction = 0
-            linear_speed = 0
+
+            # 计算线速度（基于左摇杆左右）
+            if abs(left_x) > self.deadzone:
+                linear_speed = self.map_joystick_to_velocity(abs(left_x))
+                direction = 180 if left_x < 0 else 0  # 左移=180度，右移=0度
+            else:
+                direction = 0
+                linear_speed = 0
         
         # 设置小车速度
         try:
@@ -150,18 +136,18 @@ class ChassisController:
         except Exception as e:
             print(f"小车控制错误: {e}")
     
-    def lateral_move(self, direction):
-        """横向平移
-        direction: 1=左平移, -1=右平移
+    def turn(self, direction):
+        """转向
+        direction: 1=左转, -1=右转
         """
         if self.chassis is None:
-            print(f"模拟: {'左' if direction == 1 else '右'}平移")
+            print(f"模拟: {'左' if direction == 1 else '右'}转")
             return
         
-        # 横向平移：方向角180度（左平移）或0度（右平移）
-        lateral_direction = 0 if direction == 1 else 180
+        # 转向
+        yaw_rate = -0.3 if direction == 1 else 0.3
         try:
-            self.chassis.set_velocity(50, lateral_direction, 0)
+            self.chassis.set_velocity(0, 0, yaw_rate)
         except Exception as e:
             print(f"平移控制错误: {e}")
     
@@ -314,13 +300,6 @@ class PS2Controller:
         # 按钮状态
         self.l1_pressed = False
         self.r1_pressed = False
-
-        # 按钮状态跟踪
-        self.button_states = {}  # 记录每个按钮的上一次状态
-        
-        # 初始化所有按钮状态为False
-        for btn_name in key_map:
-            self.button_states[btn_name] = False
         
         # 导入math模块用于角度计算
         import math
@@ -344,28 +323,6 @@ class PS2Controller:
 
             return True
         return False
-    
-    def check_button_press(self, button_name):
-        """检查按钮是否刚被按下（边缘检测）"""
-        current_state = self.get_safe_button(key_map[button_name])
-        previous_state = self.button_states.get(button_name, False)
-        
-        # 更新状态
-        self.button_states[button_name] = current_state
-        
-        # 如果之前是False，现在是True，表示刚按下
-        return not previous_state and current_state
-
-    def check_button_release(self, button_name):
-        """检查按钮是否刚被释放"""
-        current_state = self.get_safe_button(key_map[button_name])
-        previous_state = self.button_states.get(button_name, False)
-        
-        # 更新状态
-        self.button_states[button_name] = current_state
-        
-        # 如果之前是True，现在是False，表示刚释放
-        return previous_state and not current_state
     
     def map_joystick_to_speed(self, value):
         """映射摇杆值到舵机速度（带死区和曲线）"""
@@ -472,23 +429,23 @@ class PS2Controller:
                     time.sleep(0.5)
                     return
             
-            # L1 左平移
+            # L1 左转向
             l1_current = self.get_safe_button(key_map["PSB_L1"])
             if l1_current and not self.l1_pressed:
-                print("L1按下: 左平移")
+                print("L1按下: 左转向")
                 self.l1_pressed = True
-                self.chassis_ctrl.lateral_move(1)  # 左平移
+                self.chassis_ctrl.turn(1)  # 左转向
             elif not l1_current and self.l1_pressed:
                 print("L1释放")
                 self.l1_pressed = False
                 self.chassis_ctrl.stop()
             
-            # R1 右平移
+            # R1 右转向
             l2_current = self.get_safe_button(key_map["PSB_R1"])
             if l2_current and not self.r1_pressed:
-                print("R1按下: 右平移")
+                print("R1按下: 右转向")
                 self.r1_pressed = True
-                self.chassis_ctrl.lateral_move(-1)  # 右平移
+                self.chassis_ctrl.turn(-1)  # 右转向
             elif not l2_current and self.r1_pressed:
                 print("R1释放")
                 self.r1_pressed = False
@@ -509,34 +466,50 @@ class PS2Controller:
                 return
             
             # Y 绿色灯 - 使用边缘检测
-            if self.check_button_press("PSB_Y"):
+            if self.get_safe_button(key_map["PSB_Y"]):
                 print("Y按下: 绿色灯")
                 BZ.keydown_PSControler()
                 self.rgb_ctrl.turn_on(0, color=(0, 255, 0))
                 self.rgb_ctrl.turn_on(1, color=(0, 255, 0))
+                # 等待按钮释放
+                while self.get_safe_button(key_map["PSB_Y"]):
+                    pygame.event.pump()
+                    time.sleep(0.01)
                 return
             
             # B 红色灯 - 使用边缘检测
-            if self.check_button_press("PSB_B"):
+            if self.get_safe_button(key_map["PSB_B"]):
                 print("B按下: 红色灯")
                 BZ.keydown_PSControler()
                 self.rgb_ctrl.turn_on(0, color=(255, 0, 0))
                 self.rgb_ctrl.turn_on(1, color=(255, 0, 0))
+                # 等待按钮释放
+                while self.get_safe_button(key_map["PSB_B"]):
+                    pygame.event.pump()
+                    time.sleep(0.01)
                 return
             
             # A 蓝色灯 - 使用边缘检测
-            if self.check_button_press("PSB_A"):
+            if self.get_safe_button(key_map["PSB_A"]):
                 print("A按下: 蓝色灯")
                 BZ.keydown_PSControler()
                 self.rgb_ctrl.turn_on(0, color=(0, 0, 255))
                 self.rgb_ctrl.turn_on(1, color=(0, 0, 255))
+                # 等待按钮释放
+                while self.get_safe_button(key_map["PSB_A"]):
+                    pygame.event.pump()
+                    time.sleep(0.01)
                 return
             
             # X 关灯 - 使用边缘检测
-            if self.check_button_press("PSB_X"):
+            if self.get_safe_button(key_map["PSB_X"]):
                 print("X按下: 关灯")
                 BZ.keydown_PSControler()
                 self.rgb_ctrl.turn_off()
+                # 等待按钮释放
+                while self.get_safe_button(key_map["PSB_X"]):
+                    pygame.event.pump()
+                    time.sleep(0.01)
                 return
             
         except Exception as e:
