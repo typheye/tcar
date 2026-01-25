@@ -21,7 +21,7 @@ class LauncherManager:
 
     def show_main_launcher(self):
         """显示主菜单"""
-        menu_items = ["车辆自检", "云台控制"]
+        menu_items = ["车辆自检", "云台控制", "外接相机"]
         current_index = 0
 
         while True:
@@ -62,6 +62,17 @@ class LauncherManager:
                             self.power_monitor,
                         )
                         ptz_opera.show_main_ui()
+                    elif current_index == 2:
+                        from funs.camBox import CamBox
+
+                        cam_box = CamBox(
+                            self.display,
+                            self.buttons,
+                            self.wifi_manager,
+                            self.system_info,
+                            self.power_monitor,
+                        )
+                        cam_box.show_main_ui()
 
                 current_index = self.buttons.navigate_menu(
                     current_index, len(menu_items)

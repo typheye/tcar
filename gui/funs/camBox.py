@@ -11,7 +11,7 @@ from config import *
 from view.camera import Camera
 
 
-class PTZOpera:
+class CamBox:
     def __init__(
         self, display, buttons, wifi_manager, system_info=None, power_monitor=None
     ):
@@ -22,18 +22,12 @@ class PTZOpera:
         self.power_monitor = power_monitor
 
         # 创建相机实例
-        self.camera = Camera(camera_url="http://192.168.166.100:8080/?action=stream")
+        self.camera = Camera(camera_url=0)
 
         # UI状态
         self.show_ui = 0
         self.show_ui_msg = ""
         self.show_ui_disable = False
-
-        # 控制状态
-        self.control_states = {
-            1: {"active": False, "direction": 0, "last_cmd": ""},
-            2: {"active": False, "direction": 0, "last_cmd": ""},
-        }
 
         # 相机状态
         self.camera_enabled = False
@@ -48,29 +42,11 @@ class PTZOpera:
         self.last_change_check_time = 0
         self.last_ratio_adjust_time = 0
 
-    def send_control_command(self, servo_id, active, direction=0):
-        """发送连续控制命令"""
-        direction_str = str(direction)
-        active_str = "1" if active else "0"
-
-        cmd = f'''ssh pi@192.168.166.100 "sudo python3 /home/pi/TurboPi/HiwonderSDK/pyz_opera.py \
---servo {servo_id} \
---control \
---direction {direction_str} \
---speed 20"'''
-
-        current_cmd = f"{servo_id}:{active}:{direction}"
-        if self.control_states[servo_id]["last_cmd"] != current_cmd:
-            os.system(cmd)
-            self.control_states[servo_id]["last_cmd"] = current_cmd
-            self.control_states[servo_id]["active"] = active
-            self.control_states[servo_id]["direction"] = direction
-
     def init_camera(self):
         """初始化相机"""
         if not self.camera_initialized:
             self.camera_initialized = True
-
+            
             self.camera.start()
 
             self.show_ui, self.show_ui_msg, self.show_ui_disable = 0, "", False
@@ -125,7 +101,7 @@ class PTZOpera:
             self.frames_displayed += 1
             return True
         return False
-
+    
     def update_performance_stats(self, display_time):
         """更新性能统计"""
         if display_time is not None:
@@ -192,73 +168,18 @@ class PTZOpera:
                 self.close_camera()
                 break
 
-            control_updated = False
-
-            if press_key(KEY_up_PIN):
-                if (
-                    not self.control_states[1]["active"]
-                    or self.control_states[1]["direction"] != -1
-                ):
-                    self.send_control_command(1, True, -1)
-                    control_updated = True
-            elif press_key(KEY_down_PIN):
-                if (
-                    not self.control_states[1]["active"]
-                    or self.control_states[1]["direction"] != 1
-                ):
-                    self.send_control_command(1, True, 1)
-                    control_updated = True
-            elif self.control_states[1]["active"]:
-                self.send_control_command(1, False, 0)
-                control_updated = True
-
-            if press_key(KEY_left_PIN):
-                if (
-                    not self.control_states[2]["active"]
-                    or self.control_states[2]["direction"] != 1
-                ):
-                    self.send_control_command(2, True, 1)
-                    control_updated = True
-            elif press_key(KEY_right_PIN):
-                if (
-                    not self.control_states[2]["active"]
-                    or self.control_states[2]["direction"] != -1
-                ):
-                    self.send_control_command(2, True, -1)
-                    control_updated = True
-            elif self.control_states[2]["active"]:
-                self.send_control_command(2, False, 0)
-                control_updated = True
-
-            if control_updated:
-                time.sleep(0.005)
-
             time.sleep(0.001)
 
         return False
 
     def show_main_ui(self):
-        """显示云台控制界面"""
-
-        if get_core_status():
-            os.system(
-                'ssh pi@192.168.166.100 "sudo python3 /home/pi/TurboPi/HiwonderSDK/servo_daemon.py" &'
-            )
-        else:
-            self.show_ui, self.show_ui_msg, self.show_ui_disable = (
-                1,
-                "中枢主机未连接",
-                False,
-            )
+        """显示主界面"""
 
         while True:
             if self.show_ui == 0:
                 if self.camera_enabled:
                     should_exit = self.show_camera_view()
                     if should_exit:
-                        for servo_id in [1, 2]:
-                            if self.control_states[servo_id]["active"]:
-                                self.send_control_command(servo_id, False, 0)
                         break
                     continue
 
@@ -272,33 +193,17 @@ class PTZOpera:
                     else:
                         ip, wifi = "", ""
                     Graphics.draw_header(canvas.draw, ip, wifi)
-                    Graphics.draw_footer(canvas.draw, left_text="相机", center="重置")
+                    Graphics.draw_footer(canvas.draw, left_text="相机")
 
                     if self.camera_enabled:
                         pass
                     else:
                         canvas.draw.text(
                             (10, 35),
-                            "Typheye Car 云台控制\n\n点击'相机'按钮打开相机\n\n点击'重置'按钮复原位置\n\n点击'返回'按钮离开本页",
+                            "Typheye Car 外接相机\n\n\n\n点击'相机'按钮打开相机\n\n点击'返回'按钮离开本页",
                             font=fonts.get_font("normal"),
                             fill=COLOR_WHITE,
                         )
-
-                    if wait_press(main_PIN):
-                        wait_release(main_PIN)
-                        if get_core_status():
-                            os.system(
-                                'ssh pi@192.168.166.100 "sudo python3 /home/pi/TurboPi/HiwonderSDK/pyz_opera.py --reset"'
-                            )
-                            for servo_id in [1, 2]:
-                                self.control_states[servo_id]["active"] = False
-                                self.control_states[servo_id]["last_cmd"] = ""
-                        else:
-                            self.show_ui, self.show_ui_msg, self.show_ui_disable = (
-                                1,
-                                "中枢主机未连接",
-                                False,
-                            )
 
                     if wait_press(ok_PIN):
                         wait_release(ok_PIN)
@@ -308,55 +213,12 @@ class PTZOpera:
                                 "正在连接相机...",
                                 True,
                             )
+                        else:
                             self.close_camera()
 
                     if press_key(cancel_PIN):
                         wait_release(cancel_PIN)
-                        for servo_id in [1, 2]:
-                            if self.control_states[servo_id]["active"]:
-                                self.send_control_command(servo_id, False, 0)
                         break
-
-                    control_updated = False
-
-                    if press_key(KEY_up_PIN):
-                        if (
-                            not self.control_states[1]["active"]
-                            or self.control_states[1]["direction"] != -1
-                        ):
-                            self.send_control_command(1, True, -1)
-                            control_updated = True
-                    elif press_key(KEY_down_PIN):
-                        if (
-                            not self.control_states[1]["active"]
-                            or self.control_states[1]["direction"] != 1
-                        ):
-                            self.send_control_command(1, True, 1)
-                            control_updated = True
-                    elif self.control_states[1]["active"]:
-                        self.send_control_command(1, False, 0)
-                        control_updated = True
-
-                    if press_key(KEY_left_PIN):
-                        if (
-                            not self.control_states[2]["active"]
-                            or self.control_states[2]["direction"] != 1
-                        ):
-                            self.send_control_command(2, True, 1)
-                            control_updated = True
-                    elif press_key(KEY_right_PIN):
-                        if (
-                            not self.control_states[2]["active"]
-                            or self.control_states[2]["direction"] != -1
-                        ):
-                            self.send_control_command(2, True, -1)
-                            control_updated = True
-                    elif self.control_states[2]["active"]:
-                        self.send_control_command(2, False, 0)
-                        control_updated = True
-
-                    if control_updated:
-                        time.sleep(0.005)
 
             elif self.show_ui == 1:
                 self.show_msg_screen(self.show_ui_msg, disable=self.show_ui_disable)

@@ -15,7 +15,7 @@ from config import *
 class Camera:
     """完全独立的相机核心类"""
     
-    def __init__(self, camera_url="http://192.168.166.100:8080/?action=stream"):
+    def __init__(self, camera_url):
         self.camera_url = camera_url
         
         # 摄像头状态
@@ -93,24 +93,34 @@ class Camera:
             if not cap.isOpened():
                 log(3, "无法打开摄像头:", self.camera_url)
                 self.available = False
-                return False
+                # 仅在没有帧时才生成色块图
+                if self.current_frame is None:
+                    with self.frame_lock:
+                        snow_frame = self._generate_snow_frame()
+                        self.current_frame = snow_frame
+                        self.frame_ready = True
+                return False  # 仍然返回True
             
             self.available = True
             self.initialized = True
             cap.release()
-            log(1, "相机初始化成功")
             return True
             
         except Exception as e:
             log(3, "相机初始化错误:", str(e))
             self.available = False
+            # 仅在没有帧时才生成色块图
+            if self.current_frame is None:
+                with self.frame_lock:
+                    snow_frame = self._generate_snow_frame()
+                    self.current_frame = snow_frame
+                    self.frame_ready = True
             return False
     
     def start(self):
         """启动相机采集线程"""
         if not self.initialized:
-            if not self.initialize():
-                return False
+            self.initialize()  # 调用但不检查返回值
         
         if self.running:
             return True
@@ -123,14 +133,12 @@ class Camera:
         
         # 等待第一帧
         start_wait = time.time()
-        while time.time() - start_wait < 2.0:
+        while time.time() - start_wait < 1.0:
             if self.frame_ready and self.current_frame is not None:
                 log(1, "相机第一帧就绪")
-                return True
             time.sleep(0.05)
         
-        log(2, "相机启动超时")
-        return False
+        return True
     
     def stop(self):
         """停止相机采集线程"""
@@ -143,75 +151,151 @@ class Camera:
     def _camera_loop(self):
         """摄像头线程主循环"""
         cap = None
+        error_count = 0
+        max_retry_interval = 0.001
         
-        try:
-            cap = cv2.VideoCapture(self.camera_url)
-            if not cap.isOpened():
-                log(3, "无法打开摄像头:", self.camera_url)
-                self.available = False
-                return
-            
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            self.available = True
-            
-            log(1, f"相机已连接，开始{self.capture_fps_target}fps采集")
-            
-            last_frame_time = time.time()
-            frame_count = 0
-            fps_start_time = time.time()
-            
-            while self.running:
-                current_time = time.time()
-                elapsed = current_time - last_frame_time
+        # 初始确保有色块图
+        if not self.available or self.current_frame is None:
+            with self.frame_lock:
+                snow_frame = self._generate_snow_frame()
+                self.current_frame = snow_frame
+                self.frame_ready = True
+        
+        while self.running:
+            try:
+                # 尝试连接摄像头
+                if cap is None or not cap.isOpened():
+                    # 先显示色块图
+                    with self.frame_lock:
+                        snow_frame = self._generate_snow_frame()
+                        self.current_frame = snow_frame
+                        self.frame_ready = True
+                    
+                    cap = cv2.VideoCapture(self.camera_url)
+                    if not cap.isOpened():
+                        time.sleep(max_retry_interval)
+                        continue
+                    
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    self.available = True
+                    error_count = 0
+                    log(1, f"相机已连接，开始{self.capture_fps_target}fps采集")
                 
-                if elapsed >= self.capture_interval:
-                    # 清空缓冲区
-                    for _ in range(2):
-                        cap.grab()
-                    
-                    ret, frame = cap.retrieve()
-                    
-                    if ret and frame is not None:
-                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # 正常的帧采集循环
+                last_frame_time = time.time()
+                frame_count = 0
+                fps_start_time = time.time()
+                
+                while self.running and cap.isOpened():
+                    try:
+                        current_time = time.time()
+                        elapsed = current_time - last_frame_time
                         
-                        with self.frame_lock:
-                            self.current_frame = frame_rgb
-                            self.frame_ready = True
+                        if elapsed >= self.capture_interval:
+                            # 清空缓冲区
+                            for _ in range(2):
+                                cap.grab()
+                            
+                            ret, frame = cap.retrieve()
+                            
+                            if not ret or frame is None:
+                                raise RuntimeError("摄像头无有效帧")
+                            
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            
+                            with self.frame_lock:
+                                self.current_frame = frame_rgb
+                                self.frame_ready = True
+                            
+                            last_frame_time = current_time
+                            frame_count += 1
+                            error_count = 0
+                            
+                            # 更新FPS
+                            if current_time - fps_start_time >= 0.5:
+                                with self.fps_lock:
+                                    self.capture_fps = int(frame_count * 2)
+                                frame_count = 0
+                                fps_start_time = current_time
                         
-                        last_frame_time = current_time
-                        frame_count += 1
-                        
-                        # 更新FPS
-                        if current_time - fps_start_time >= 0.5:
-                            with self.fps_lock:
-                                self.capture_fps = int(frame_count * 2)
-                            frame_count = 0
-                            fps_start_time = current_time
-                    
-                    time.sleep(0.0001)
-                else:
-                    sleep_time = max(0, self.capture_interval - (time.time() - last_frame_time))
-                    if sleep_time > 0:
-                        time.sleep(sleep_time * 0.8)
-                        
-        except Exception as e:
-            log(3, "相机线程错误:", str(e))
-            self.available = False
-        finally:
-            if cap:
-                cap.release()
-            log(1, "相机线程结束")
+                        time.sleep(0.001)
+                            
+                    except Exception as e:
+                        log(3, "帧采集异常:", str(e))
+                        break  # 跳出内层循环
+                
+                # 如果跳出内层循环，表示摄像头出问题了
+                self.available = False
+                if cap:
+                    cap.release()
+                    cap = None
+                
+                # 显示色块图
+                with self.frame_lock:
+                    snow_frame = self._generate_snow_frame()
+                    self.current_frame = snow_frame
+                    self.frame_ready = True
+                
+                # 等待后重试
+                time.sleep(max_retry_interval)
+                
+            except Exception as e:
+                log(2, f"摄像头循环异常: {str(e)}")
+                self.available = False
+                with self.frame_lock:
+                    snow_frame = self._generate_snow_frame()
+                    self.current_frame = snow_frame
+                    self.frame_ready = True
+                time.sleep(max_retry_interval)
+        
+        # 循环结束后的清理
+        if cap:
+            cap.release()
+        log(1, "相机线程结束")
     
+    def _generate_snow_frame(self):
+        """生成240x180的随机大块马赛克图"""
+        # 随机生成更大的块（减少细节）
+        block_size = 10  # 块大小
+        num_rows = 180 // block_size + 1
+        num_cols = 240 // block_size + 1
+        
+        # 创建空图像
+        frame = np.zeros((180, 240, 3), dtype=np.uint8)
+        
+        # 生成随机颜色矩阵
+        color_matrix = np.random.randint(0, 256, (num_rows, num_cols, 3), dtype=np.uint8)
+        
+        # 填充马赛克块
+        for i in range(num_rows):
+            for j in range(num_cols):
+                y_start = i * block_size
+                y_end = min((i + 1) * block_size, 180)
+                x_start = j * block_size
+                x_end = min((j + 1) * block_size, 240)
+                
+                frame[y_start:y_end, x_start:x_end] = color_matrix[i, j]
+        
+        return frame
+
     def get_frame(self):
         """获取当前帧"""
-        if self.frame_ready:
-            with self.frame_lock:
-                if self.current_frame is not None:
-                    return self.current_frame.copy()
-        return None
+        with self.frame_lock:
+            if self.current_frame is not None:
+                return self.current_frame.copy()
+        
+        # 如果当前帧为空，生成色块图
+        snow_frame = self._generate_snow_frame()
+        with self.frame_lock:
+            self.current_frame = snow_frame
+            self.frame_ready = True
+        return snow_frame
     
     def get_stats(self):
         """获取性能统计"""
+        if not self.available:
+            return 0, 0  # 摄像头不可用时返回0,0
+    
         with self.fps_lock:
             cam_fps = self.capture_fps
         with self.display_fps_lock:
@@ -220,6 +304,11 @@ class Camera:
     
     def update_display_fps(self):
         """更新显示帧率统计"""
+        if not self.available:
+            with self.display_fps_lock:
+                self.display_fps = 0
+            return
+    
         self.display_frame_count += 1
         current_time = time.time()
         if current_time - self.display_fps_start_time >= 0.5:
