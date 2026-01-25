@@ -94,10 +94,7 @@ class NetworkStatus:
             else: COLOR = COLOR_YELLOW
             return (f"{voltage:.1f} V", int(battery), COLOR)
         else:
-            if self.core_status:
-                return (f"7.0 V", 10, COLOR_RED)
-            else:
-                return (f"0.0 V", 100, COLOR_MID_BLUE)
+            return (f"0.0 V", 100, COLOR_MID_BLUE)
         
     
     def _get_route_temperature(self):
@@ -155,7 +152,7 @@ class NetworkStatus:
                     shell=True,
                     capture_output=True,
                     text=True,
-                    timeout=0.5  # 设置0.5秒超时
+                    timeout=2  # 设置2秒超时
                 )
                 
                 # 解析JSON输出

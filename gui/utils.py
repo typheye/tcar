@@ -106,7 +106,7 @@ def get_core_info():
                 """执行SSH命令并返回结果"""
                 full_cmd = f'{ssh_prefix} "{cmd}"'
                 try:
-                    return subprocess.check_output(full_cmd, shell=True, stderr=subprocess.DEVNULL, timeout=0.5).decode("utf-8").strip()
+                    return subprocess.check_output(full_cmd, shell=True, stderr=subprocess.DEVNULL, timeout=2).decode("utf-8").strip()
                 except:
                     return ""
             
