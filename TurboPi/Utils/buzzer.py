@@ -17,9 +17,5 @@ def keydown_PSControler():
 def keydown_combination_PSControler():
     Board.setBuzzer(0)
     Board.setBuzzer(1)
-    time.sleep(0.01)
-    Board.setBuzzer(0)
-    time.sleep(0.20)
-    Board.setBuzzer(1)
-    time.sleep(0.01)
+    time.sleep(0.05)
     Board.setBuzzer(0)

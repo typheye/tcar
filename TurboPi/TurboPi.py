@@ -130,14 +130,14 @@ def startTruckPi():
     Avoidance.HWSONAR = HWSONAR
     
     RPCServer.QUEUE = QUEUE_RPC
+    
+    # 启动PS2控制器
+    startPSControler()
 
     threading.Thread(target=RPCServer.startRPCServer,
                      daemon=True).start()  # rpc服务器
     threading.Thread(target=MjpgServer.startMjpgServer,
                      daemon=True).start()  # mjpg流服务器
-    
-    # 启动PS2控制器
-    startPSControler()
     
     loading_picture = cv2.imread('/home/pi/MiniPi/CameraCalibration/loading.jpg')
     cam = Camera.Camera()  # 相机读取

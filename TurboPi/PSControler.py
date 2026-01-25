@@ -32,20 +32,6 @@ def signal_handler(signum, frame):
     print(f"PS2控制器收到退出信号 {signum}")
     RUNNING = False
 
-class RGBControl:
-    def __init__(self):
-        self.turn_off()
-
-    def turn_off(self):
-        Board.RGB.setPixelColor(0, Board.PixelColor(0, 0, 0))
-        Board.RGB.setPixelColor(1, Board.PixelColor(0, 0, 0))
-        Board.RGB.show()
-
-    def turn_on(self, id, color = (255, 255, 255)):
-        Board.RGB.setPixelColor(id, Board.PixelColor(color[0], color[1], color[2]))
-        Board.RGB.show()
-
-
 class ChassisController:
     """小车底盘控制器"""
     def __init__(self):
@@ -271,9 +257,6 @@ class PS2Controller:
         # 初始化小车控制器
         self.chassis_ctrl = ChassisController()
         
-        # 初始化RGB控制器
-        self.rgb_ctrl = RGBControl()
-        
         # 右摇杆相关（舵机控制）
         self.last_Rxy = [0, 0]
         self.deadzone = 0.15  # 死区
@@ -399,23 +382,6 @@ class PS2Controller:
         else:
             self.target_speed[2] = 0
     
-    def process_hat(self, hat_x, hat_y):
-        """处理方向键输入"""
-        # 方向键控制（数字模式）
-        if hat_y == 1:  # 上
-            self.target_speed[1] = -30  # 舵机1向上
-        elif hat_y == -1:  # 下
-            self.target_speed[1] = 30   # 舵机1向下
-        else:
-            self.target_speed[1] = 0
-        
-        if hat_x == -1:  # 左
-            self.target_speed[2] = 30  # 舵机2向左
-        elif hat_x == 1:  # 右
-            self.target_speed[2] = -30   # 舵机2向右
-        else:
-            self.target_speed[2] = 0
-    
     def process_buttons(self):
         """处理按钮输入"""
         try:
@@ -434,7 +400,10 @@ class PS2Controller:
             if l1_current and not self.l1_pressed:
                 print("L1按下: 左转向")
                 self.l1_pressed = True
-                self.chassis_ctrl.turn(1)  # 左转向
+                if self.shield:  # 模拟模式
+                    self.chassis_ctrl.turn(1)  # 左转向
+                else:
+                    BZ.keydown_PSControler()
             elif not l1_current and self.l1_pressed:
                 print("L1释放")
                 self.l1_pressed = False
@@ -445,11 +414,41 @@ class PS2Controller:
             if l2_current and not self.r1_pressed:
                 print("R1按下: 右转向")
                 self.r1_pressed = True
-                self.chassis_ctrl.turn(-1)  # 右转向
+                if self.shield:  # 模拟模式
+                    self.chassis_ctrl.turn(-1)  # 右转向
+                else:
+                    BZ.keydown_PSControler()
             elif not l2_current and self.r1_pressed:
                 print("R1释放")
                 self.r1_pressed = False
                 self.chassis_ctrl.stop()
+
+            # L2
+            if self.get_safe_button(key_map["PSB_L2"]):
+                print("L2按下")
+                BZ.keydown_PSControler()
+                # 等待按钮释放
+                while self.get_safe_button(key_map["PSB_L2"]):
+                    pygame.event.pump()
+                    time.sleep(0.01)
+
+            # R2
+            if self.get_safe_button(key_map["PSB_R2"]):
+                print("R2按下")
+                BZ.keydown_PSControler()
+                # 等待按钮释放
+                while self.get_safe_button(key_map["PSB_R2"]):
+                    pygame.event.pump()
+                    time.sleep(0.01)
+            
+            # L3
+            if self.get_safe_button(key_map["PSB_L3"]):
+                print("L3按下")
+                BZ.keydown_PSControler()
+                # 等待按钮释放
+                while self.get_safe_button(key_map["PSB_L3"]):
+                    pygame.event.pump()
+                    time.sleep(0.01)
             
             # R3 重置舵机
             if self.get_safe_button(key_map["PSB_R3"]):
@@ -463,54 +462,75 @@ class PS2Controller:
                 while self.get_safe_button(key_map["PSB_R3"]):
                     pygame.event.pump()
                     time.sleep(0.01)
-                return
             
-            # Y 绿色灯 - 使用边缘检测
+            # Y - 使用边缘检测
             if self.get_safe_button(key_map["PSB_Y"]):
-                print("Y按下: 绿色灯")
+                print("Y按下")
                 BZ.keydown_PSControler()
-                self.rgb_ctrl.turn_on(0, color=(0, 255, 0))
-                self.rgb_ctrl.turn_on(1, color=(0, 255, 0))
                 # 等待按钮释放
                 while self.get_safe_button(key_map["PSB_Y"]):
                     pygame.event.pump()
                     time.sleep(0.01)
-                return
             
-            # B 红色灯 - 使用边缘检测
+            # B - 使用边缘检测
             if self.get_safe_button(key_map["PSB_B"]):
-                print("B按下: 红色灯")
+                print("B按下")
                 BZ.keydown_PSControler()
-                self.rgb_ctrl.turn_on(0, color=(255, 0, 0))
-                self.rgb_ctrl.turn_on(1, color=(255, 0, 0))
                 # 等待按钮释放
                 while self.get_safe_button(key_map["PSB_B"]):
                     pygame.event.pump()
                     time.sleep(0.01)
-                return
             
-            # A 蓝色灯 - 使用边缘检测
+            # A - 使用边缘检测
             if self.get_safe_button(key_map["PSB_A"]):
-                print("A按下: 蓝色灯")
+                print("A按下")
                 BZ.keydown_PSControler()
-                self.rgb_ctrl.turn_on(0, color=(0, 0, 255))
-                self.rgb_ctrl.turn_on(1, color=(0, 0, 255))
                 # 等待按钮释放
                 while self.get_safe_button(key_map["PSB_A"]):
                     pygame.event.pump()
                     time.sleep(0.01)
-                return
             
-            # X 关灯 - 使用边缘检测
+            # X - 使用边缘检测
             if self.get_safe_button(key_map["PSB_X"]):
-                print("X按下: 关灯")
+                print("X按下")
                 BZ.keydown_PSControler()
-                self.rgb_ctrl.turn_off()
                 # 等待按钮释放
                 while self.get_safe_button(key_map["PSB_X"]):
                     pygame.event.pump()
                     time.sleep(0.01)
-                return
+
+            hat_x, hat_y = self.js.get_hat(0)
+            """处理方向键输入"""
+            # 方向键控制（数字模式）
+            if hat_y == 1:  # 上
+                BZ.keydown_PSControler()
+                while hat_y == 1:
+                    hat_x, hat_y = self.js.get_hat(0)
+                    pygame.event.pump()
+                    time.sleep(0.01)
+            elif hat_y == -1:  # 下
+                BZ.keydown_PSControler()
+                while hat_y == -1:
+                    hat_x, hat_y = self.js.get_hat(0)
+                    pygame.event.pump()
+                    time.sleep(0.01)
+            else:
+                pass
+            
+            if hat_x == -1:  # 左
+                BZ.keydown_PSControler()
+                while hat_x == -1:
+                    hat_x, hat_y = self.js.get_hat(0)
+                    pygame.event.pump()
+                    time.sleep(0.01)
+            elif hat_x == 1:  # 右
+                BZ.keydown_PSControler()
+                while hat_x == 1:
+                    hat_x, hat_y = self.js.get_hat(0)
+                    pygame.event.pump()
+                    time.sleep(0.01)
+            else:
+                pass
             
         except Exception as e:
             print(f"按钮处理错误: {e}")
@@ -556,7 +576,8 @@ class PS2Controller:
                         if event.axis == self.axis_mapping["left_x"] or event.axis == self.axis_mapping["left_y"]:
                             current_Lx = self.js.get_axis(self.axis_mapping["left_x"])
                             current_Ly = self.js.get_axis(self.axis_mapping["left_y"])
-                            self.process_left_joystick(current_Lx, current_Ly)
+                            if self.shield:  # 模拟模式
+                                self.process_left_joystick(current_Lx, current_Ly)
                         
                         # 右摇杆移动事件（舵机控制）
                         if event.axis == self.axis_mapping["right_x"] or event.axis == self.axis_mapping["right_y"]:
@@ -568,9 +589,7 @@ class PS2Controller:
                     
                     elif event.type == pygame.JOYHATMOTION:
                         # 方向键事件
-                        if not self.shield:  # 数字模式
-                            hat_x, hat_y = self.js.get_hat(0)
-                            self.process_hat(hat_x, hat_y)
+                        pass
                 
                 # 处理按钮
                 self.process_buttons()
