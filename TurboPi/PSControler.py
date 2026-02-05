@@ -454,10 +454,11 @@ class PS2Controller:
             if self.get_safe_button(key_map["PSB_R3"]):
                 print("R3按下: 重置舵机")
                 BZ.keydown_PSControler()
-                self.servo_ctrl.reset_servos()
-                # 重置速度
-                self.target_speed = {1: 0, 2: 0}
-                self.current_speed = {1: 0, 2: 0}
+                if self.shield:  # 模拟模式
+                    self.servo_ctrl.reset_servos()
+                    # 重置速度
+                    self.target_speed = {1: 0, 2: 0}
+                    self.current_speed = {1: 0, 2: 0}
                 # 等待按钮释放
                 while self.get_safe_button(key_map["PSB_R3"]):
                     pygame.event.pump()
@@ -539,12 +540,6 @@ class PS2Controller:
         """主循环"""
         print("=" * 50)
         print("PS2控制器启动中...")
-        print("左摇杆控制: 上下->小车前后, 左右->小车转向")
-        print("右摇杆控制: 上下->舵机1, 左右->舵机2")
-        print("L1: 左平移")
-        print("R1: 右平移")
-        print("R2: 重置舵机位置")
-        print("SELECT+START: 切换模拟/数字模式")
         print("=" * 50)
         
         # 测试舵机初始状态
