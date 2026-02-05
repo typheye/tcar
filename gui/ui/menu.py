@@ -116,11 +116,11 @@ class MenuManager:
                 y_pos = 27 + i * 23
                 if i == current_index:
                     Graphics.draw_rounded_rect(
-                        draw, 8, y_pos, 219, 19, 18, COLOR_LIGHT_BLUE
+                        draw, 8, y_pos, 223, 19, 18, COLOR_LIGHT_BLUE
                     )
                 else:
                     Graphics.draw_rounded_rect(
-                        draw, 8, y_pos, 219, 20, 18, COLOR_MID_BLUE
+                        draw, 8, y_pos, 223, 20, 18, COLOR_MID_BLUE
                     )
                 draw.text(
                     (27, y_pos), item, font=fonts.get_font("normal"), fill=COLOR_WHITE
@@ -134,11 +134,11 @@ class MenuManager:
 
                 if i == (visible_items - 1):
                     Graphics.draw_rounded_rect(
-                        draw, 8, y_pos, 219, 19, 18, COLOR_LIGHT_BLUE
+                        draw, 8, y_pos, 223, 19, 18, COLOR_LIGHT_BLUE
                     )
                 else:
                     Graphics.draw_rounded_rect(
-                        draw, 8, y_pos, 219, 20, 18, COLOR_MID_BLUE
+                        draw, 8, y_pos, 223, 20, 18, COLOR_MID_BLUE
                     )
 
                 draw.text(
@@ -170,7 +170,7 @@ class MenuManager:
                 Graphics.draw_footer(canvas.draw, left_text="")
 
                 # 信息显示区域 - 修复高度和位置
-                # Graphics.draw_rounded_rect(canvas.draw, 8, 27, 219, 180, 16, COLOR_MID_BLUE)
+                # Graphics.draw_rounded_rect(canvas.draw, 8, 27, 223, 180, 16, COLOR_MID_BLUE)
 
                 # 获取系统信息
                 if self.system_info:
@@ -223,7 +223,7 @@ class MenuManager:
                 Graphics.draw_footer(canvas.draw, left_text="")
 
                 # 信息显示区域 - 修复高度和位置
-                # Graphics.draw_rounded_rect(canvas.draw, 8, 27, 219, 180, 16, COLOR_MID_BLUE)
+                # Graphics.draw_rounded_rect(canvas.draw, 8, 27, 223, 180, 16, COLOR_MID_BLUE)
 
                 # 获取系统信息
                 if self.system_info:
@@ -424,7 +424,7 @@ class MenuManager:
                     ip, wifi = "", ""
                 Graphics.draw_header(canvas.draw, ip, wifi)
                 Graphics.draw_rounded_rect(
-                    canvas.draw, 8, 27, 219, 19, 18, COLOR_MID_BLUE
+                    canvas.draw, 8, 27, 223, 19, 18, COLOR_MID_BLUE
                 )
                 canvas.draw.text(
                     (27, 27), "亮度", font=fonts.get_font("normal"), fill=COLOR_WHITE

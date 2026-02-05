@@ -389,7 +389,7 @@ class PTZOpera:
             if not disable:
                 Graphics.draw_footer(canvas.draw, left_text="确定", right_text="")
 
-            Graphics.draw_rounded_rect(canvas.draw, 8, 27, 219, 50, 16, COLOR_MID_BLUE)
+            Graphics.draw_rounded_rect(canvas.draw, 6, 27, 225, 50, 16, COLOR_MID_BLUE)
             canvas.draw.text(
                 (30, 42), message, font=fonts.get_font("medium"), fill=COLOR_WHITE
             )

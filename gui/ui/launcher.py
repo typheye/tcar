@@ -94,11 +94,11 @@ class LauncherManager:
                 y_pos = 27 + i * 23
                 if i == current_index:
                     Graphics.draw_rounded_rect(
-                        draw, 8, y_pos, 219, 19, 18, COLOR_LIGHT_BLUE
+                        draw, 8, y_pos, 223, 19, 18, COLOR_LIGHT_BLUE
                     )
                 else:
                     Graphics.draw_rounded_rect(
-                        draw, 8, y_pos, 219, 20, 18, COLOR_MID_BLUE
+                        draw, 8, y_pos, 223, 20, 18, COLOR_MID_BLUE
                     )
                 draw.text(
                     (27, y_pos), item, font=fonts.get_font("normal"), fill=COLOR_WHITE
@@ -112,11 +112,11 @@ class LauncherManager:
 
                 if i == (visible_items - 1):
                     Graphics.draw_rounded_rect(
-                        draw, 8, y_pos, 219, 19, 18, COLOR_LIGHT_BLUE
+                        draw, 8, y_pos, 223, 19, 18, COLOR_LIGHT_BLUE
                     )
                 else:
                     Graphics.draw_rounded_rect(
-                        draw, 8, y_pos, 219, 20, 18, COLOR_MID_BLUE
+                        draw, 8, y_pos, 223, 20, 18, COLOR_MID_BLUE
                     )
 
                 draw.text(

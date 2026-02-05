@@ -471,9 +471,9 @@ class Graphics:
                 (0, 0),
                 (90, 0),
                 (110, 20),
-                (215, 20),
-                (235, 40),
-                (235, 215),
+                (218, 20),
+                (238, 40),
+                (238, 215),
                 (20, 215),
                 (0, 195),
                 (0, 0),
@@ -487,9 +487,9 @@ class Graphics:
                 (line_width, line_width),
                 (90 - line_width, line_width),
                 (110 - line_width, 20 + line_width),
-                (215 - line_width, 20 + line_width),
-                (235 - line_width, 40 + line_width),
-                (235 - line_width, 215 - line_width),
+                (218 - line_width, 20 + line_width),
+                (238 - line_width, 40 + line_width),
+                (238 - line_width, 215 - line_width),
                 (20 + line_width, 215 - line_width),
                 (line_width, 195 - line_width),
                 (line_width, line_width),
@@ -501,22 +501,22 @@ class Graphics:
         # 装饰元素
         draw.polygon([(83, 8), (88, 8), (98, 18), (93, 18)], fill=COLOR_BLUE)
         draw.polygon([(73, 8), (78, 8), (88, 18), (83, 18)], fill=COLOR_BLUE)
-        draw.polygon([(220, 20), (235, 20), (235, 35)], fill=COLOR_BLUE)
+        draw.polygon([(223, 20), (238, 20), (238, 35)], fill=COLOR_BLUE)
 
         # 标题栏图标
-        draw.rectangle((6, 6, 18, 20), fill=COLOR_BLUE)
+        draw.rectangle((6, 8, 18, 22), fill=COLOR_BLUE)
         draw.polygon(
             [
-                (8, 8),
-                (16, 8),
-                (16, 18),
-                (8, 18),
-                (8, 16),
-                (14, 14),
-                (14, 12),
                 (8, 10),
+                (16, 10),
+                (16, 20),
+                (8, 20),
+                (8, 18),
+                (14, 16),
+                (14, 14),
+                (8, 12),
+                (14, 12),
                 (14, 10),
-                (14, 8),
             ],
             fill=COLOR_DARK_BLUE,
         )
