@@ -166,7 +166,7 @@ def get_core_status(timeout=0.005):
         # 其他所有异常都视为失败
         return False
     
-def is_valid_ip(ip_str):
+def is_valid_ip(ip_str, octet = False):
     """判断IP地址字符串是否合法"""
     if not ip_str or ip_str == "未知":
         return False
@@ -191,13 +191,14 @@ def is_valid_ip(ip_str):
                 return False
         
         # 检查是否是私有地址（可选，根据需求决定是否排除）
-        # first_octet = int(parts[0])
-        # if first_octet == 10:  # 10.0.0.0/8
-        #     return False
-        # if first_octet == 172 and 16 <= int(parts[1]) <= 31:  # 172.16.0.0/12
-        #     return False
-        # if first_octet == 192 and parts[1] == '168':  # 192.168.0.0/16
-        #     return False
+        if octet:
+            first_octet = int(parts[0])
+            if first_octet == 10:  # 10.0.0.0/8
+                return False
+            if first_octet == 172 and 16 <= int(parts[1]) <= 31:  # 172.16.0.0/12
+                return False
+            if first_octet == 192 and parts[1] == '168':  # 192.168.0.0/16
+                return False
     
     # 检查IPv6格式（简化检查）
     elif ':' in ip_str:

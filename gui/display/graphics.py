@@ -5,7 +5,6 @@ from PIL import ImageDraw
 from display.fonts import fonts
 from config import *
 
-
 class Graphics:
     @staticmethod
     def signal(draw, left=0, top=0, width=10, height=8, signal=100):
@@ -415,7 +414,7 @@ class Graphics:
     @staticmethod
     def draw_header(draw, ip="", wifi=""):
         """绘制页面头部信息"""
-        if ip == "192.168.66.2":
+        if False:
             Graphics.signal(draw, left=105, top=1, width=20, height=17, signal=100)
         else:
             Graphics.signal(draw, left=105, top=1, width=20, height=17, signal=0)
