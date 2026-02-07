@@ -27,13 +27,13 @@ class MenuManager:
             with self.display.lcd.create_canvas() as canvas:
                 Graphics.draw_background(canvas.draw, "设置")
                 if self.system_info:
-                    ip, wifi = (
-                        self.system_info.get_info()[0],
+                    online, network = (
+                        self.system_info.get_online(),
                         self.system_info.get_info()[-2],
                     )
                 else:
-                    ip, wifi = "", ""
-                Graphics.draw_header(canvas.draw, ip, wifi)
+                    online, network = False, ""
+                Graphics.draw_header(canvas.draw, online, network)
                 self._draw_menu(canvas.draw, menu_items, current_index)
                 Graphics.draw_footer(canvas.draw, left_text="确定")
 
@@ -77,13 +77,13 @@ class MenuManager:
             with self.display.lcd.create_canvas() as canvas:
                 Graphics.draw_background(canvas.draw, title)
                 if self.system_info:
-                    ip, wifi = (
-                        self.system_info.get_info()[0],
+                    online, network = (
+                        self.system_info.get_online(),
                         self.system_info.get_info()[-2],
                     )
                 else:
-                    ip, wifi = "", ""
-                Graphics.draw_header(canvas.draw, ip, wifi)
+                    online, network = False, ""
+                Graphics.draw_header(canvas.draw, online, network)
                 self._draw_menu(canvas.draw, items, current_index)
                 Graphics.draw_footer(canvas.draw, left_text="选择", right_text="取消")
 
@@ -160,13 +160,13 @@ class MenuManager:
             with self.display.lcd.create_canvas() as canvas:
                 Graphics.draw_background(canvas.draw, "本机")
                 if self.system_info:
-                    ip, wifi = (
-                        self.system_info.get_info()[0],
+                    online, network = (
+                        self.system_info.get_online(),
                         self.system_info.get_info()[-2],
                     )
                 else:
-                    ip, wifi = "", ""
-                Graphics.draw_header(canvas.draw, ip, wifi)
+                    online, network = False, ""
+                Graphics.draw_header(canvas.draw, online, network)
                 Graphics.draw_footer(canvas.draw, left_text="")
 
                 # 信息显示区域 - 修复高度和位置
@@ -213,13 +213,13 @@ class MenuManager:
             with self.display.lcd.create_canvas() as canvas:
                 Graphics.draw_background(canvas.draw, "中枢")
                 if self.system_info:
-                    ip, wifi = (
-                        self.system_info.get_info()[0],
+                    online, network = (
+                        self.system_info.get_online(),
                         self.system_info.get_info()[-2],
                     )
                 else:
-                    ip, wifi = "", ""
-                Graphics.draw_header(canvas.draw, ip, wifi)
+                    online, network = False, ""
+                Graphics.draw_header(canvas.draw, online, network)
                 Graphics.draw_footer(canvas.draw, left_text="")
 
                 # 信息显示区域 - 修复高度和位置
@@ -262,13 +262,13 @@ class MenuManager:
             with self.display.lcd.create_canvas() as canvas:
                 Graphics.draw_background(canvas.draw, "网络")
                 if self.system_info:
-                    ip, wifi = (
-                        self.system_info.get_info()[0],
+                    online, network = (
+                        self.system_info.get_online(),
                         self.system_info.get_info()[-2],
                     )
                 else:
-                    ip, wifi = "", ""
-                Graphics.draw_header(canvas.draw, ip, wifi)
+                    online, network = False, ""
+                Graphics.draw_header(canvas.draw, online, network)
                 self._draw_menu(canvas.draw, menu_items, current_index)
                 Graphics.draw_footer(canvas.draw, left_text="确定")
 
@@ -299,13 +299,13 @@ class MenuManager:
             with self.display.lcd.create_canvas() as canvas:
                 Graphics.draw_background(canvas.draw, "WLAN")
                 if self.system_info:
-                    ip, wifi = (
-                        self.system_info.get_info()[0],
+                    online, network = (
+                        self.system_info.get_online(),
                         self.system_info.get_info()[-2],
                     )
                 else:
-                    ip, wifi = "", ""
-                Graphics.draw_header(canvas.draw, ip, wifi)
+                    online, network = False, ""
+                Graphics.draw_header(canvas.draw, online, network)
                 Graphics.draw_footer(canvas.draw, left_text="确定", center="扫描")
 
                 # 显示输入字段
@@ -384,13 +384,13 @@ class MenuManager:
             with self.display.lcd.create_canvas() as canvas:
                 Graphics.draw_background(canvas.draw, "显示")
                 if self.system_info:
-                    ip, wifi = (
-                        self.system_info.get_info()[0],
+                    online, network = (
+                        self.system_info.get_online(),
                         self.system_info.get_info()[-2],
                     )
                 else:
-                    ip, wifi = "", ""
-                Graphics.draw_header(canvas.draw, ip, wifi)
+                    online, network = False, ""
+                Graphics.draw_header(canvas.draw, online, network)
                 self._draw_menu(canvas.draw, menu_items, current_index)
                 Graphics.draw_footer(canvas.draw, left_text="确定")
 
@@ -416,13 +416,13 @@ class MenuManager:
             with self.display.lcd.create_canvas() as canvas:
                 Graphics.draw_background(canvas.draw, "背光")
                 if self.system_info:
-                    ip, wifi = (
-                        self.system_info.get_info()[0],
+                    online, network = (
+                        self.system_info.get_online(),
                         self.system_info.get_info()[-2],
                     )
                 else:
-                    ip, wifi = "", ""
-                Graphics.draw_header(canvas.draw, ip, wifi)
+                    online, network = False, ""
+                Graphics.draw_header(canvas.draw, online, network)
                 Graphics.draw_rounded_rect(
                     canvas.draw, 8, 27, 223, 19, 18, COLOR_MID_BLUE
                 )

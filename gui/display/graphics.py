@@ -412,19 +412,19 @@ class Graphics:
         )
 
     @staticmethod
-    def draw_header(draw, ip="", wifi=""):
+    def draw_header(draw, online = False, network=""):
         """绘制页面头部信息"""
-        if False:
+        if online:
             Graphics.signal(draw, left=105, top=1, width=20, height=17, signal=100)
         else:
             Graphics.signal(draw, left=105, top=1, width=20, height=17, signal=0)
 
-        if "以太网" in wifi:
+        if "以太网" in network:
             Graphics.eth(draw, left=132, top=1, width=20, height=17, connected=True)
         else:
             Graphics.eth(draw, left=132, top=1, width=20, height=17, connected=False)
 
-        if "WLAN" in wifi:
+        if "WLAN" in network:
             Graphics.wifi(draw, left=150, top=1, width=17, height=17, signal=100)
         else:
             Graphics.wifi(draw, left=150, top=1, width=17, height=17, signal=0)

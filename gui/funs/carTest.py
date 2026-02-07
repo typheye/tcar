@@ -37,13 +37,13 @@ class CarTest:
                 with self.display.lcd.create_canvas() as canvas:
                     Graphics.draw_background(canvas.draw, "程序")
                     if self.system_info:
-                        ip, wifi = (
-                            self.system_info.get_info()[0],
+                        online, network = (
+                            self.system_info.get_online(),
                             self.system_info.get_info()[-2],
                         )
                     else:
-                        ip, wifi = "", ""
-                    Graphics.draw_header(canvas.draw, ip, wifi)
+                        online, network = False, ""
+                    Graphics.draw_header(canvas.draw, online, network)
                     Graphics.draw_footer(canvas.draw, left_text="确定")
 
                     canvas.draw.text(
@@ -87,13 +87,13 @@ class CarTest:
         with self.display.lcd.create_canvas() as canvas:
             Graphics.draw_background(canvas.draw, "提示")
             if self.system_info:
-                ip, wifi = (
-                    self.system_info.get_info()[0],
+                online, network = (
+                    self.system_info.get_online(),
                     self.system_info.get_info()[-2],
                 )
             else:
-                ip, wifi = "", ""
-            Graphics.draw_header(canvas.draw, ip, wifi)
+                online, network = False, ""
+            Graphics.draw_header(canvas.draw, online, network)
             if not disable:
                 Graphics.draw_footer(canvas.draw, left_text="确定", right_text="")
 

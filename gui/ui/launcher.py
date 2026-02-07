@@ -28,13 +28,13 @@ class LauncherManager:
             with self.display.lcd.create_canvas() as canvas:
                 Graphics.draw_background(canvas.draw, "程序")
                 if self.system_info:
-                    ip, wifi = (
-                        self.system_info.get_info()[0],
+                    online, network = (
+                        self.system_info.get_online(),
                         self.system_info.get_info()[-2],
                     )
                 else:
-                    ip, wifi = "", ""
-                Graphics.draw_header(canvas.draw, ip, wifi)
+                    online, network = False, ""
+                Graphics.draw_header(canvas.draw, online, network)
                 self._draw_menu(canvas.draw, menu_items, current_index)
                 Graphics.draw_footer(canvas.draw, left_text="确定")
 

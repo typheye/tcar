@@ -1,6 +1,7 @@
 # -*- coding:utf-8 -*-
 # 工具函数
 
+import socket
 import time
 import RPi.GPIO as GPIO
 import subprocess
@@ -130,6 +131,14 @@ def get_core_info():
             return "未知", "0.0"
     else:
         return "未知", "0.0"
+    
+def get_online(timeout=1):
+    """检测网络状态的最快方法"""
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=timeout)
+        return True
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        return False
 
 def log(level, *info):
     """日志记录"""

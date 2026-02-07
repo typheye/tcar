@@ -29,13 +29,13 @@ class ScreenManager:
                 with self.display.lcd.create_canvas() as canvas:
                     Graphics.draw_background(canvas.draw, "桌面")
                     if self.system_info:
-                        ip, wifi = (
-                            self.system_info.get_info()[0],
+                        online, network = (
+                            self.system_info.get_online(),
                             self.system_info.get_info()[-2],
                         )
                     else:
-                        ip, wifi = "", ""
-                    Graphics.draw_header(canvas.draw, ip, wifi)
+                        online, network = False, ""
+                    Graphics.draw_header(canvas.draw, online, network)
                     Graphics.draw_footer(
                         canvas.draw, right_text="设置", left_text="程序", center="信息"
                     )
@@ -266,13 +266,13 @@ class ScreenManager:
         with self.display.lcd.create_canvas() as canvas:
             Graphics.draw_background(canvas.draw, "提示")
             if self.system_info:
-                ip, wifi = (
-                    self.system_info.get_info()[0],
+                online, network = (
+                    self.system_info.get_online(),
                     self.system_info.get_info()[-2],
                 )
             else:
-                ip, wifi = "", ""
-            Graphics.draw_header(canvas.draw, ip, wifi)
+                online, network = False, ""
+            Graphics.draw_header(canvas.draw, online, network)
             Graphics.draw_footer(canvas.draw, left_text="确定", right_text="")
 
             Graphics.draw_rounded_rect(canvas.draw, 6, 27, 225, 50, 16, COLOR_MID_BLUE)
