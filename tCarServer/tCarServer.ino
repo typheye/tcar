@@ -22,15 +22,9 @@ unsigned long previousMillis = 0;
 int ledState = LOW;
 int blinkMode = 0; // 0:长闪, 1:慢闪, 2:快闪
 
-// 外部WiFi连接状态
-bool onlineMode = false;
-String externalSSID = "";
-String externalPassword = "";
-
 // 系统状态监控变量
 float cpuTemperature = 0.0;
 int memoryUsage = 0;
-int cpuUsage = 0;
 unsigned long lastStatsUpdate = 0;
 
 // 设备MAC地址映射
@@ -102,7 +96,6 @@ void setup() {
   // 设置Web服务器路由
   server.on("/", handleRoot); // 根路径处理函数
   server.on("/favicon.ico", handleFavicon); // 图标处理
-  server.on("/connect_wifi", handleConnectWifi); // 连接外部WiFi
   server.on("/test", handleTest); // 新增测试接口
   server.onNotFound(handleNotFound); // 404处理
   
@@ -238,9 +231,6 @@ void handleTest() {
   
   // ESP温度
   jsonResponse += ",\"esptemp\":\"" + String(cpuTemperature, 1) + "\"";
-
-  // 联网状态
-  jsonResponse += ",\"isOnline\":" + String(onlineMode ? "true" : "false");
   
   jsonResponse += "}";
   
@@ -256,67 +246,11 @@ void updateSystemStats() {
   uint32_t freeHeap = esp_get_free_heap_size();
   uint32_t totalHeap = esp_get_minimum_free_heap_size() + freeHeap;
   memoryUsage = 100 - (freeHeap * 100 / totalHeap);
-  
-  // 简化版CPU使用率计算（通过空闲时间估算）
-  static unsigned long lastIdleTime = 0;
-  unsigned long idleTime = millis() - lastStatsUpdate;
-  cpuUsage = constrain(100 - (idleTime / 20), 0, 100); // 简化计算
-  lastIdleTime = idleTime;
 }
 
 // 图标处理函数
 void handleFavicon() {
   server.send_P(200, "image/x-icon", (const char*)favicon_ico, favicon_ico_size);
-}
-
-// 连接外部WiFi处理函数
-void handleConnectWifi() {
-  if (server.hasArg("ssid") && server.hasArg("password")) {
-    externalSSID = server.arg("ssid");
-    externalPassword = server.arg("password");
-    onlineMode = server.hasArg("onlineMode") && server.arg("onlineMode") == "on";
-    
-    if (onlineMode && externalSSID.length() > 0)  {
-      Serial.println("尝试连接外部WiFi: " + externalSSID);
-      
-      // 尝试连接外部WiFi
-      WiFi.begin(externalSSID.c_str(), externalPassword.c_str());
-      
-      // 等待连接结果
-      int attempts = 0;
-      while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-        delay(500);
-        Serial.print(".");
-        attempts++;
-      }
-      
-      if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\n外部WiFi连接成功!");
-        Serial.print("IP地址: ");
-        Serial.println(WiFi.localIP());
-
-        // 关键：启用 NAT
-        // enableNAT();
-        
-        // 重新配置mDNS
-        // MDNS.end();
-        // MDNS.begin("tcar");
-        // MDNS.addService("http", "tcp", 80);
-        
-        server.send(200, "text/plain", "连接成功! IP: " + WiFi.localIP().toString());
-      } else {
-        Serial.println("\n外部WiFi连接失败!");
-        server.send(200, "text/plain", "连接失败，请检查SSID和密码");
-      }
-    } else {
-      onlineMode = false;
-      WiFi.disconnect();
-      Serial.println("已断开外部WiFi连接");
-      server.send(200, "text/plain", "已断开外部WiFi连接");
-    }
-  } else {
-    server.send(400, "text/plain", "参数错误");
-  }
 }
 
 // 初始化OTA函数
@@ -544,20 +478,10 @@ void handleRoot() {
   
   html += "<p><strong>温度:</strong> " + String(cpuTemperature, 1) + " °C</p>";
   html += "<p><strong>内存:</strong> " + String(memoryUsage) + "%</p>";
-  html += "<p><strong>核心:</strong> " + String(cpuUsage) + "%</p>";
   html += "<p><strong>名称:</strong> " + String(ssid) + "</p>";
   html += "<p><strong>地址:</strong> " + WiFi.softAPIP().toString() + "</p>";
   html += "<p><strong>频段:</strong> 2.4GHz (信道" + String(WiFi.channel()) + ")</p>";
   html += "<p><strong>设备:</strong> " + String(connectedDevices) + "/" + String(max_connections) + "</p>";
-  
-  // 显示外部WiFi连接状态
-  // if (onlineMode && WiFi.status() == WL_CONNECTED) {
-  //   html += "<p><strong>联网:</strong> 已连接 (" + externalSSID + ") - " + WiFi.localIP().toString() + "</p>";
-  // } else if (onlineMode) {
-  //   html += "<p><strong>联网:</strong> 连接中 (" + externalSSID + ")</p>";
-  // } else {
-  //   html += "<p><strong>联网:</strong> 未连接</p>";
-  // }
   
   // 显示连接设备信息
   html += "<table>";
@@ -640,30 +564,6 @@ void handleRoot() {
   }
 
   html += "</table>";
-
-  // 外部WiFi连接模块
-  // html += "<div class='wifi-section'>";
-  // html += "<h2>联网</h2>";
-  // html += "<div style='display: flex; align-items: center;'>";
-  // html += "<strong>在线模式: </strong>";
-  // html += "<label class='switch'>";
-  // html += "<input type='checkbox' id='onlineModeToggle' " + String(onlineMode ? "checked" : "") + " onchange='toggleWifiForm()'>";
-  // html += "<span class='slider round'></span>";
-  // html += "</label>";
-  // html += "</div>";
-  
-  // html += "<div id='wifiForm' class='wifi-form' " + String(onlineMode ? "style='display: block;'" : "") + ">";
-  // html += "<div class='form-group'>";
-  // html += "<label for='ssid'>WiFi名称:</label>";
-  // html += "<input type='text' id='ssid' name='ssid' value='" + externalSSID + "' placeholder='输入WiFi名称'>";
-  // html += "</div>";
-  // html += "<div class='form-group'>";
-  // html += "<label for='password'>WiFi密码:</label>";
-  // html += "<input type='password' id='password' name='password' value='" + externalPassword + "' placeholder='输入WiFi密码'>";
-  // html += "</div>";
-  // html += "<button class='wifi-button' onclick='connectWifi()'>连接</button>";
-  // html += "</div>";
-  // html += "</div>";
   
   // OTA更新模块
   html += "<div class='ota-section'>";
@@ -691,42 +591,6 @@ void handleRoot() {
   html += "<li>快闪  <span class='led-status led-fast-blinking'></span> - 系统启动中或OTA更新中</li>";
   html += "</ul>";
   html += "</div>";
-  
-  html += "<script>";
-  html += "function toggleWifiForm() {";
-  html += "  var toggle = document.getElementById('onlineModeToggle');";
-  html += "  var form = document.getElementById('wifiForm');";
-  html += "  form.style.display = toggle.checked ? 'block' : 'none';";
-  html += "  if(!toggle.checked) {";
-  html += "    form.style.display = 'none';";
-  html += "    document.getElementById('ssid').value = '';";
-  html += "    document.getElementById('password').value = '';";
-
-  if (onlineMode && WiFi.status() == WL_CONNECTED) {
-    html += "  connectWifi();";
-  }
-
-  html += "  }";
-  html += "}";
-  html += "function connectWifi() {";
-  html += "  var ssid = document.getElementById('ssid').value;";
-  html += "  var password = document.getElementById('password').value;";
-  html += "  var onlineMode = document.getElementById('onlineModeToggle').checked;";
-  html += "  ";
-  html += "  var xhr = new XMLHttpRequest();";
-  html += "  xhr.open('POST', '/connect_wifi', true);";
-  html += "  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');";
-  html += "  xhr.onload = () => {";
-  html += "    if (xhr.status === 200) {";
-  html += "      alert(xhr.responseText);";
-  html += "      location.reload();";
-  html += "    } else {";
-  html += "      alert('连接请求失败');";
-  html += "    }";
-  html += "  };";
-  html += "  xhr.send('ssid=' + encodeURIComponent(ssid) + '&password=' + encodeURIComponent(password) + '&onlineMode=' + (onlineMode ? 'on' : 'off'));";
-  html += "}";
-  html += "</script>";
   
   html += "<style>";
   html += "@keyframes blink { ";
