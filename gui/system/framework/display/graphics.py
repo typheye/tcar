@@ -2,8 +2,8 @@
 # 图形元素绘制
 
 from PIL import ImageDraw
-from display.fonts import fonts
-from config import *
+from system.framework.display.fonts import fonts
+from system.config import *
 
 class Graphics:
     @staticmethod

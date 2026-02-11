@@ -2,10 +2,10 @@
 # 虚拟键盘
 import time
 
-from display.graphics import Graphics
-from display.fonts import fonts
-from utils import press_key, wait_release
-from config import *
+from system.framework.display.graphics import Graphics
+from system.framework.display.fonts import fonts
+from system.framework.public.utils import press_key, wait_release
+from system.config import *
 from hardware.buttons import ButtonManager
 
 class VirtualKeyboard:

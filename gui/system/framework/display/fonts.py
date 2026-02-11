@@ -2,7 +2,7 @@
 # 字体管理
 
 from PIL import ImageFont
-from config import *
+from system.config import *
 
 class FontManager:
     def __init__(self):

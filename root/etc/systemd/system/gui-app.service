@@ -7,7 +7,7 @@ Wants=multi-user.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/gui
-ExecStart=/usr/bin/python3 /home/pi/gui/main.py
+ExecStart=/usr/bin/python3 /home/pi/gui/init.py
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1

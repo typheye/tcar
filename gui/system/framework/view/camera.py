@@ -6,10 +6,10 @@ import time
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw
-from system.rpc import rpc_client
-from display.fonts import fonts
-from utils import log
-from config import *
+from system.framework.public.rpc import rpc_client
+from system.framework.display.fonts import fonts
+from system.framework.public.utils import log
+from system.config import *
 
 
 class Camera:

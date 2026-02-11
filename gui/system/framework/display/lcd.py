@@ -3,14 +3,14 @@
 
 import time
 import RPi.GPIO as GPIO
-from system.power import PowerManager
+from system.framework.page.power import PowerManager
 import spidev as SPI  # 添加SPI导入
 from PIL import Image, ImageDraw
 from hardware.st7789 import ST7789
-from config import *
-from display.graphics import Graphics
-from display.fonts import fonts
-from utils import press_key, wait_release, wait_press, log
+from system.config import *
+from system.framework.display.graphics import Graphics
+from system.framework.display.fonts import fonts
+from system.framework.public.utils import press_key, wait_release, wait_press, log
 
 class LCDController:
     def __init__(self, device):
@@ -53,7 +53,7 @@ class LCDController:
         with self.create_canvas() as canvas:
             canvas.draw.rectangle((0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), fill=COLOR_BLACK)
             try:
-                img = Image.open("/home/pi/gui/assets/logo.png").convert("RGBA")
+                img = Image.open("/home/pi/gui/system/media/splash.png").convert("RGBA")
                 img = img.resize((SCREEN_WIDTH, SCREEN_HEIGHT), Image.ANTIALIAS)
                 canvas.draw.bitmap((0, 0), img, fill=None)
             except Exception as e:

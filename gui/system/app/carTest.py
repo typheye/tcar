@@ -2,19 +2,18 @@
 # 车体自检系统
 
 import time
-from display.graphics import Graphics
-from display.fonts import fonts
-from utils import press_key, wait_release, wait_press, get_core_status
-from config import *
+from system.framework.display.graphics import Graphics
+from system.framework.display.fonts import fonts
+from system.framework.public.utils import press_key, wait_release, wait_press, get_core_status
+from system.config import *
 
 
 class CarTest:
     def __init__(
-        self, display, buttons, wifi_manager, system_info=None, power_monitor=None
+        self, display, buttons, system_info=None, power_monitor=None
     ):
         self.display = display
         self.buttons = buttons
-        self.wifi_manager = wifi_manager
         self.system_info = system_info
         self.power_monitor = power_monitor
         self.show_ui = 0

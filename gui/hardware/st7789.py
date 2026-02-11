@@ -1,7 +1,7 @@
 import spidev
 import RPi.GPIO as GPIO
 import time
-from config import *
+from system.config import *
 import numpy as np
 
 class ST7789(object):

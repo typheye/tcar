@@ -5,9 +5,9 @@ import threading
 import time
 import urllib.request
 import json
-from system.rpc import rpc_client
-from utils import *
-from config import *
+from system.framework.public.rpc import rpc_client
+from system.framework.public.utils import *
+from system.config import *
 
 class NetworkStatus:
     def __init__(self):

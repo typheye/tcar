@@ -3,7 +3,7 @@
 
 import threading
 import time
-from utils import get_system_info, log, get_core_info, get_online
+from system.framework.public.utils import get_system_info, log, get_core_info, get_online
 
 class SystemInfo:
     def __init__(self):

@@ -3,92 +3,67 @@
 
 import time
 import re
-from display.graphics import Graphics
-from display.fonts import fonts
-from utils import press_key, wait_release, wait_press
-from config import *
+from system.framework.display.graphics import Graphics
+from system.framework.display.fonts import fonts
+from system.framework.public.utils import press_key, wait_release, wait_press
+from system.config import *
 
 
 class ScreenManager:
     def __init__(
-        self, display, buttons, system_info, network_status, wifi_manager, power_monitor
+        self, display, buttons, system_info, network_status, power_monitor
     ):
         self.display = display
         self.buttons = buttons
         self.system_info = system_info
         self.network_status = network_status
-        self.wifi_manager = wifi_manager
         self.power_monitor = power_monitor
-        self.show_ui = 0
-        self.show_ui_msg = ""
 
     def show_main_screen(self):
         """显示主屏幕"""
         while True:
-            if self.show_ui == 0:
-                with self.display.lcd.create_canvas() as canvas:
-                    Graphics.draw_background(canvas.draw, "桌面")
-                    if self.system_info:
-                        online, network = (
-                            self.system_info.get_online(),
-                            self.system_info.get_info()[-2],
-                        )
-                    else:
-                        online, network = False, ""
-                    Graphics.draw_header(canvas.draw, online, network)
-                    Graphics.draw_footer(
-                        canvas.draw, right_text="设置", left_text="程序", center="信息"
+            with self.display.lcd.create_canvas() as canvas:
+                Graphics.draw_background(canvas.draw, "桌面")
+                if self.system_info:
+                    online, network = (
+                        self.system_info.get_online(),
+                        self.system_info.get_info()[-2],
                     )
+                else:
+                    online, network = False, ""
+                Graphics.draw_header(canvas.draw, online, network)
+                Graphics.draw_footer(canvas.draw, right_text="设置", left_text="程序")
 
-                    # 时间卡片
-                    # self._draw_time_card(canvas.draw)
+                # 车图卡片
+                self._draw_car_card(canvas.draw, online)
 
-                    # 车图卡片
-                    self._draw_car_card(canvas.draw)
+                # 系统状态卡片
+                self._draw_status_cards(canvas.draw)
 
-                    # 系统状态卡片
-                    self._draw_status_cards(canvas.draw)
+                if wait_press(cancel_PIN):
+                    from system.framework.page.menu import MenuManager
 
-                    # 处理按键
-                    # if press_key(main_PIN):
-                    #     press_time = wait_release(main_PIN)
-                    #     if press_time > 1000:  # 长按关机
-                    #         from system.power import PowerManager
-                    #         PowerManager.show_power_off_screen(self.display, self.buttons, self.wifi_manager)
+                    menu = MenuManager(
+                        self.display,
+                        self.buttons,
+                        self.system_info,
+                        self.power_monitor,
+                    )
+                    menu.show_main_menu()
 
-                    if wait_press(main_PIN):
-                        wait_release(main_PIN)
-                        self.show_ui = 1
-                        self.show_ui_msg = "暂无消息"
+                if wait_press(ok_PIN):
+                    from system.framework.page.launcher import LauncherManager
 
-                    if wait_press(cancel_PIN):
-                        from ui.menu import MenuManager
+                    menu = LauncherManager(
+                        self.display,
+                        self.buttons,
+                        self.system_info,
+                        self.power_monitor,
+                    )
+                    menu.show_main_launcher()
+                    pass
 
-                        menu = MenuManager(
-                            self.display,
-                            self.buttons,
-                            self.wifi_manager,
-                            self.system_info,
-                            self.power_monitor,
-                        )
-                        menu.show_main_menu()
-
-                    if wait_press(ok_PIN):
-                        from ui.launcher import LauncherManager
-
-                        menu = LauncherManager(
-                            self.display,
-                            self.buttons,
-                            self.wifi_manager,
-                            self.system_info,
-                            self.power_monitor,
-                        )
-                        menu.show_main_launcher()
-                        pass
-
-                    # return
-            elif self.show_ui == 1:
-                self.show_msg_screen(self.show_ui_msg)
+                # return
 
             time.sleep(0.01)
 
@@ -119,7 +94,7 @@ class ScreenManager:
             fill=COLOR_WHITE,
         )
 
-    def _draw_car_card(self, draw):
+    def _draw_car_card(self, draw, network = False):
         """绘制车卡片"""
         # time_card_x, time_card_y = 20, 43
         # time_card_w, time_card_h = 200, 60
@@ -142,17 +117,22 @@ class ScreenManager:
             5,
             COLOR_MID_BLUE,
         )
-        draw.text(
-            (info1_card_x + 9, info1_card_y + 5),
-            "警告",
-            font=fonts.get_font("normal"),
-            fill=COLOR_WHITE,
+        draw.rectangle(
+            (
+                info1_card_x + 8,
+                info1_card_y + 35,
+                info1_card_x + 8 + 34,
+                info1_card_y + 35 + 15,
+            ),
+            outline=COLOR_DARK_BLUE,
+            width=1,
+            fill=COLOR_GREEN if network else COLOR_YELLOW,
         )
         draw.text(
-            (info1_card_x + 15, info1_card_y + info1_card_h / 2 - 5),
-            "0",
-            font=fonts.get_font("large"),
-            fill=COLOR_GREEN,
+            (info1_card_x + 11, info1_card_y + 7),
+            "NET",
+            font=fonts.get_font("normal"),
+            fill=COLOR_WHITE,
         )
 
         # 车图
@@ -260,27 +240,3 @@ class ScreenManager:
             font=fonts.get_font("normal"),
             fill=central_color,
         )
-
-    def show_msg_screen(self, message="提示内容"):
-        """显示加载屏幕"""
-        with self.display.lcd.create_canvas() as canvas:
-            Graphics.draw_background(canvas.draw, "提示")
-            if self.system_info:
-                online, network = (
-                    self.system_info.get_online(),
-                    self.system_info.get_info()[-2],
-                )
-            else:
-                online, network = False, ""
-            Graphics.draw_header(canvas.draw, online, network)
-            Graphics.draw_footer(canvas.draw, left_text="确定", right_text="")
-
-            Graphics.draw_rounded_rect(canvas.draw, 6, 27, 225, 50, 16, COLOR_MID_BLUE)
-            canvas.draw.text(
-                (30, 42), message, font=fonts.get_font("medium"), fill=COLOR_WHITE
-            )
-
-            if press_key(ok_PIN):
-                wait_release(ok_PIN)
-                self.show_ui = 0
-                self.show_ui_msg = ""

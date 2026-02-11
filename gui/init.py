@@ -4,34 +4,30 @@
 import time
 import traceback
 import spidev as SPI  # 添加SPI导入
-from utils import log, setup_gpio, press_key, wait_release
-from display.lcd import DisplayManager
+from system.framework.public.utils import log, setup_gpio, press_key, wait_release
+from system.framework.display.lcd import DisplayManager
 from hardware.buttons import ButtonManager
 from hardware.ina219 import INA219
-from network.wifi import WiFiManager
-from network.status import NetworkStatus
-from system.info import SystemInfo
-from ui.screens import ScreenManager
-from bootloader import Bootloader
-from recovery import Recovery
-from config import *
+from system.framework.public.status import NetworkStatus
+from system.framework.public.info import SystemInfo
+from system.framework.screens import ScreenManager
+from system.config import *
 
 
-class TypheyeSystem:
+class GUI:
     def __init__(self):
         self.running = False
         self.display = None
         self.buttons = None
         self.system_info = None
         self.network_status = None
-        self.wifi_manager = None
         self.power_monitor = None
         self.screen_manager = None
         self.bootloader = None
 
     def initialize(self):
         """初始化系统"""
-        log(3, "初始化Typheye系统...")
+        log(3, "初始化系统...")
 
         try:
             # 初始化GPIO
@@ -42,12 +38,7 @@ class TypheyeSystem:
             self.buttons = ButtonManager()
             self.power_monitor = INA219(addr=INA219_ADDR)
 
-            # 初始化Bootloader
-            self.bootloader = Bootloader(self.display.get_device())
-            self.recovery = Recovery(self.display.get_device(), self.bootloader)
-
             # 初始化管理器
-            self.wifi_manager = WiFiManager()
             self.system_info = SystemInfo()
             self.network_status = NetworkStatus()
 
@@ -61,7 +52,6 @@ class TypheyeSystem:
                 self.buttons,
                 self.system_info,
                 self.network_status,
-                self.wifi_manager,
                 self.power_monitor,
             )
 
@@ -79,9 +69,9 @@ class TypheyeSystem:
             return
 
         self.running = True
-        log(3, "启动Typheye系统...")
+        log(3, "启动系统...")
 
-        enter_bootloader = False
+        btn_press = False
 
         try:
             if SYS_MODE == 1:
@@ -95,22 +85,16 @@ class TypheyeSystem:
                     if press_key(main_PIN):
                         press_time = wait_release(main_PIN)
                         if press_time > 800: 
-                            enter_bootloader = True
+                            btn_press = True
                             pass
 
                     time.sleep(0.01)  # 避免CPU占用过高
 
             if SYS_MODE == 2:
-                enter_bootloader = True
+                btn_press = True
 
-            if enter_bootloader:
-                while True:
-                    flag = self.bootloader.get_flag()
-                    if flag == "BOOTLOADER":
-                        self.bootloader.show_main()
-                    elif flag == "RECOVERY":
-                        self.recovery.show_main()
-                    time.sleep(0.01)  # 防止错误循环过快
+            if btn_press:
+                pass
             else:
                 if SYS_MODE == 1:
                     # 显示启动画面
@@ -139,7 +123,7 @@ class TypheyeSystem:
 
     def shutdown(self):
         """关闭系统"""
-        log(3, "关闭Typheye系统...")
+        log(3, "关闭系统...")
         self.running = False
 
         try:
@@ -147,8 +131,6 @@ class TypheyeSystem:
                 self.system_info.stop_monitoring()
             if self.network_status:
                 self.network_status.stop_monitoring()
-            if self.wifi_manager:
-                self.wifi_manager.stop_airodump()
             if self.display:
                 self.display.cleanup()
             if self.buttons:
@@ -162,7 +144,7 @@ class TypheyeSystem:
 
 def main():
     """主函数"""
-    system = TypheyeSystem()
+    system = GUI()
 
     try:
         system.run()

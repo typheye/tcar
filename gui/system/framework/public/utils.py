@@ -8,7 +8,7 @@ import subprocess
 import re
 import subprocess
 import platform
-from config import *
+from system.config import *
 
 def setup_gpio():
     """初始化GPIO引脚"""
@@ -147,10 +147,10 @@ def log(level, *info):
     s = symbols.get(level, " ")
     print("[%s] %s - %s" % (s, _time, ", ".join([str(x) for x in info])))
 
-def get_core_status(timeout=0.005):
+def get_core_status(timeout=0.05):
     """测试主机是否在线（防止卡死）"""
     host = "192.168.166.100"
-        
+    
     try:
         # Linux/Mac: -c 次数, -W 超时(秒)
         cmd = ['ping', '-c', '1', '-W', str(timeout), host]
@@ -172,7 +172,6 @@ def get_core_status(timeout=0.005):
         # 命令执行超时
         return False
     except Exception:
-        # 其他所有异常都视为失败
         return False
     
 def is_valid_ip(ip_str, octet = False):

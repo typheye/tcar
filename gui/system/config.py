@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-SYS_MODE = 1   # 0: Debug Mode | 1: User Mode | 2: Fastboot Mode
+SYS_MODE = 1   # 0: Debug Mode | 1: User Mode
 
 # 屏幕尺寸
 SCREEN_WIDTH = 240
@@ -55,10 +55,6 @@ FONT_BOLD = "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf"
 
 # INA219地址
 INA219_ADDR = 0x43
-
-# 网络配置
-MAC_DB_PATH = "/home/pi/mac.db"
-AIRODUMP_RESULT_PATH = "/home/pi/result-01.csv"
 
 # JSON数据源URL
 JSON_DATA_URL = "http://192.168.66.1/test"

@@ -3,15 +3,15 @@
 
 import os
 import time
-from display.fonts import fonts
-from utils import log
-from config import *
+from system.framework.display.fonts import fonts
+from system.framework.public.utils import log
+from system.config import *
 
 class PowerManager:
     @staticmethod
-    def show_power_off_screen(display, buttons, wifi_manager, system_info=None, power_monitor=None):
-        from ui.menu import MenuManager
-        menu = MenuManager(display, buttons, wifi_manager, system_info, power_monitor)
+    def show_power_off_screen(display, buttons, system_info=None, power_monitor=None):
+        from system.framework.page.menu import MenuManager
+        menu = MenuManager(display, buttons, system_info, power_monitor)
         
         options = ["是", "否"]
         choice = menu.show_selection_menu("重启", options)

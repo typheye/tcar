@@ -3,19 +3,18 @@
 
 import os
 import time
-from display.graphics import Graphics
-from display.fonts import fonts
-from utils import press_key, wait_release, wait_press
-from config import *
+from system.framework.display.graphics import Graphics
+from system.framework.display.fonts import fonts
+from system.framework.public.utils import press_key, wait_release, wait_press
+from system.config import *
 
 
 class LauncherManager:
     def __init__(
-        self, display, buttons, wifi_manager, system_info=None, power_monitor=None
+        self, display, buttons, system_info=None, power_monitor=None
     ):
         self.display = display
         self.buttons = buttons
-        self.wifi_manager = wifi_manager
         self.system_info = system_info
         self.power_monitor = power_monitor
 
@@ -41,34 +40,31 @@ class LauncherManager:
                 # 处理按键
                 if wait_press(KEY_press_PIN) or wait_press(ok_PIN):
                     if current_index == 0:
-                        from funs.carTest import CarTest
+                        from system.app.carTest import CarTest
 
                         car_test = CarTest(
                             self.display,
                             self.buttons,
-                            self.wifi_manager,
                             self.system_info,
                             self.power_monitor,
                         )
                         car_test.show_main_ui()
                     elif current_index == 1:
-                        from funs.ptzOpera import PTZOpera
+                        from system.app.ptzOpera import PTZOpera
 
                         ptz_opera = PTZOpera(
                             self.display,
                             self.buttons,
-                            self.wifi_manager,
                             self.system_info,
                             self.power_monitor,
                         )
                         ptz_opera.show_main_ui()
                     elif current_index == 2:
-                        from funs.camBox import CamBox
+                        from system.app.camBox import CamBox
 
                         cam_box = CamBox(
                             self.display,
                             self.buttons,
-                            self.wifi_manager,
                             self.system_info,
                             self.power_monitor,
                         )
