@@ -180,7 +180,7 @@ class MenuManager:
                     cpu,
                     mem,
                     disk,
-                    f"电量: {self.power_monitor.get_battery_percentage()}% ({self.power_monitor.get_bus_voltage_V():.3f}V)",  # 使用传入的power_monitor
+                    f"电压: {self.power_monitor.get_bus_voltage_V():.3f}V",  # 使用传入的power_monitor
                 ]
 
                 # 调整Y坐标起始位置和行间距

@@ -90,9 +90,10 @@ class NetworkStatus:
     def get_core_battery(self):
         status, voltage, battery = self.core_battery_info_status, self.core_battery_info_voltage, self.core_battery_info_battery
         if status:
-            if battery > 20: COLOR = COLOR_BLUE
-            else: COLOR = COLOR_YELLOW
-            return (f"{voltage:.1f} V", int(battery), COLOR)
+            # if battery > 20: COLOR = COLOR_BLUE
+            # else: COLOR = COLOR_YELLOW
+            # return (f"{voltage:.1f} V", int(battery), COLOR)
+            return (f"{voltage:.1f} V", 100, COLOR_BLUE)
         else:
             return (f"0.0 V", 100, COLOR_MID_BLUE)
         
