@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set IP=192.168.66.4
+set IP=192.168.66.3
 
 :menu
 cls

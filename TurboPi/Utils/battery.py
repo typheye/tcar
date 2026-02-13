@@ -16,10 +16,10 @@ import HiwonderSDK.Board as Board
 # 配置参数 - 简化和优化
 class BatteryConfig:
     # 电压参数（根据实际测量）
-    FULL_VOLTAGE = 7.9    # 满电电压
+    FULL_VOLTAGE = 7.8    # 满电电压
     EMPTY_VOLTAGE = 7.0   # 空电电压
     MIN_VOLTAGE = 6.8     # 最低有效电压
-    MAX_VOLTAGE = 8.4     # 最高有效电压
+    MAX_VOLTAGE = 8.2     # 最高有效电压
     
     # 采样参数（优化为1秒内完成）
     SAMPLING_INTERVAL = 0.02  # 20ms采样间隔，更快响应
@@ -85,7 +85,7 @@ class BatteryMonitor:
         return voltage
     
     def calculate_battery_percent(self, voltage):
-        """计算电量百分比 - 针对7.9V满电优化"""
+        """计算电量百分比 - 针对7.8V满电优化"""
         if voltage <= self.config.EMPTY_VOLTAGE:
             return 0.0
         elif voltage >= self.config.FULL_VOLTAGE:

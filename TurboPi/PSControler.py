@@ -43,7 +43,7 @@ class ChassisController:
             print("警告: 小车底盘使用模拟模式")
         
         # 小车控制参数
-        self.max_speed = 100      # 最大线速度 0~100
+        self.max_speed = 60      # 最大线速度 0~60
         self.max_yaw_rate = 2.0   # 最大偏航角速度 -2~2
         self.move_active = False  # 移动激活状态
         
@@ -63,7 +63,7 @@ class ChassisController:
         # 应用平方曲线（更精细的控制）
         normalized = normalized ** 1.5
         
-        # 映射到速度 0-100
+        # 映射到速度 0-60
         speed = normalized * self.max_speed
         return speed
     
