@@ -1,14 +1,14 @@
 @echo off
 REM ============================================================================
 REM * @file    with-raspiz2w.bat
-REM * @author  JanPNP Development Team
+REM * @author  tCar Development Team
 REM * @brief   Raspberry Pi deployment script for Windows
 REM *          Provides commands for uploading files, managing services,
-REM *          and SSH access to the Raspberry Pi running JanPNP system.
+REM *          and SSH access to the Raspberry Pi running tCar system.
 REM ============================================================================
 REM * @attention
 REM *
-REM * Copyright (c) 2026 JanPNP Development Team. All rights reserved.
+REM * Copyright (c) 2026 tCar Development Team. All rights reserved.
 REM *
 REM * This software is licensed under terms that can be found in the LICENSE file
 REM * in the root directory of this software component.
@@ -38,7 +38,7 @@ if !errorlevel! neq 0 (
   echo [ERROR] Upload failed!
   exit /b 1
 )
-echo [2/2] Restarting JanPNP service...
+echo [2/2] Restarting tCar service...
 ssh pi@%IP% "sudo systemctl stop tcar.service"
 timeout /t 2 /nobreak >nul
 ssh pi@%IP% "sudo pkill -f 'python.*init.py' || true"
@@ -70,7 +70,7 @@ exit /b 0
 
 :view_log
 echo ================================
-echo Viewing janpnp.service real-time logs
+echo Viewing tcar.service real-time logs
 echo ================================
 echo Press Ctrl+C to exit log view
 echo ================================
@@ -85,11 +85,11 @@ echo.
 echo Usage: with-raspiz2w.bat [OPTION]
 echo.
 echo Options:
-echo  --reset  Upload and restart JanPNP service
+echo  --reset  Upload and restart tCar service
 echo  --ssh    Open SSH terminal to Raspberry Pi
-echo  --log    View janpnp.service real-time logs
+echo  --log    View tcar.service real-time logs
 echo  --reboot Reboot Raspberry Pi
-echo  --format Remove ~/janpnp directory on Raspberry Pi
+echo  --format Remove ~/tcar directory on Raspberry Pi
 echo  --help   Show this help message
 echo.
 echo Example: with-raspiz2w.bat --reset
