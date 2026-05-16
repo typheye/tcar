@@ -4,7 +4,7 @@
 import time
 import re
 from server.gui.public.graphics import Graphics
-from server.gui.public.fonts import fonts
+from server.gui.public.font_manager import fonts
 from server.gui.public.utils import press_key, wait_release, wait_press
 from media.config import *
 
@@ -41,7 +41,7 @@ class ScreenManager:
                 self._draw_status_cards(canvas.draw)
 
                 if wait_press(cancel_PIN):
-                    from server.gui.page.menu import MenuManager
+                    from server.gui.page.menu_manager import MenuManager
 
                     menu = MenuManager(
                         self.display,
@@ -52,9 +52,9 @@ class ScreenManager:
                     menu.show_main_menu()
 
                 if wait_press(ok_PIN):
-                    from server.gui.page.home import LauncherManager
+                    from server.gui.page.app_home import AppHome
 
-                    menu = LauncherManager(
+                    menu = AppHome(
                         self.display,
                         self.buttons,
                         self.system_info,

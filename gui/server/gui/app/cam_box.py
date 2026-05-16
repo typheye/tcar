@@ -5,10 +5,10 @@ import cv2
 import numpy as np
 from PIL import Image
 from server.gui.public.graphics import Graphics
-from server.gui.public.fonts import fonts
+from server.gui.public.font_manager import fonts
 from server.gui.public.utils import press_key, wait_release, wait_press, get_core_status, log
 from media.config import *
-from server.gui.public.camera import Camera
+from server.gui.public.camera_manager import Camera
 
 
 class CamBox:

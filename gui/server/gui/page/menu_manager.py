@@ -3,7 +3,7 @@
 
 import time
 from server.gui.public.graphics import Graphics
-from server.gui.public.fonts import fonts
+from server.gui.public.font_manager import fonts
 from server.gui.public.utils import press_key, wait_release, wait_press
 from media.config import *
 
@@ -43,7 +43,7 @@ class MenuManager:
                     elif current_index == 1:
                         self.show_core_info()
                     elif current_index == 2:
-                        from server.gui.page.power import PowerManager
+                        from server.gui.page.power_manager import PowerManager
 
                         if PowerManager.show_power_off_screen(
                             self.display,
@@ -144,7 +144,7 @@ class MenuManager:
 
     def show_system_info(self):
         """显示系统信息屏幕"""
-        from server.gui.public.info import SystemInfo
+        from server.gui.public.system_info import SystemInfo
         from hardware.ina219 import INA219
 
         # system_info = SystemInfo()

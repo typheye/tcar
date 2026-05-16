@@ -3,13 +3,13 @@
 
 import time
 import RPi.GPIO as GPIO
-from server.gui.page.power import PowerManager
+from server.gui.page.power_manager import PowerManager
 import spidev as SPI  # 添加SPI导入
 from PIL import Image, ImageDraw
 from hardware.st7789 import ST7789
 from media.config import *
 from server.gui.public.graphics import Graphics
-from server.gui.public.fonts import fonts
+from server.gui.public.font_manager import fonts
 from server.gui.public.utils import press_key, wait_release, wait_press, log
 
 class LCDController:

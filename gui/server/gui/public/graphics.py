@@ -2,7 +2,7 @@
 # 图形元素绘制
 
 from PIL import ImageDraw
-from server.gui.public.fonts import fonts
+from server.gui.public.font_manager import fonts
 from media.config import *
 
 class Graphics:

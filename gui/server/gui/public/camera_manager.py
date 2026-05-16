@@ -6,8 +6,8 @@ import time
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw
-from server.gui.public.rpc import rpc_client
-from server.gui.public.fonts import fonts
+from server.gui.public.rpc_kits import rpc_client
+from server.gui.public.font_manager import fonts
 from server.gui.public.utils import log
 from media.config import *
 

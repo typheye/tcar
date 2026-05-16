@@ -3,14 +3,14 @@
 
 import os
 import time
-from server.gui.public.fonts import fonts
+from server.gui.public.font_manager import fonts
 from server.gui.public.utils import log
 from media.config import *
 
 class PowerManager:
     @staticmethod
     def show_power_off_screen(display, buttons, system_info=None, power_monitor=None):
-        from server.gui.page.menu import MenuManager
+        from server.gui.page.menu_manager import MenuManager
         menu = MenuManager(display, buttons, system_info, power_monitor)
         
         options = ["是", "否"]

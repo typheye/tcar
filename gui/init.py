@@ -5,11 +5,11 @@ import time
 import traceback
 import spidev as SPI  # 添加SPI导入
 from server.gui.public.utils import log, setup_gpio, press_key, wait_release
-from server.gui.public.lcd import DisplayManager
+from server.gui.public.lcd_controller import DisplayManager
 from hardware.buttons import ButtonManager
 from hardware.ina219 import INA219
-from server.gui.public.status import NetworkStatus
-from server.gui.public.info import SystemInfo
+from server.gui.public.network_status import NetworkStatus
+from server.gui.public.system_info import SystemInfo
 from server.gui.launcher import ScreenManager
 from media.config import *
 

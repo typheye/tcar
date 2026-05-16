@@ -4,12 +4,12 @@
 import os
 import time
 from server.gui.public.graphics import Graphics
-from server.gui.public.fonts import fonts
+from server.gui.public.font_manager import fonts
 from server.gui.public.utils import press_key, wait_release, wait_press
 from media.config import *
 
 
-class LauncherManager:
+class AppHome:
     def __init__(
         self, display, buttons, system_info=None, power_monitor=None
     ):
@@ -40,7 +40,7 @@ class LauncherManager:
                 # 处理按键
                 if wait_press(KEY_press_PIN) or wait_press(ok_PIN):
                     if current_index == 0:
-                        from server.gui.app.carTest import CarTest
+                        from server.gui.app.car_test import CarTest
 
                         car_test = CarTest(
                             self.display,
@@ -50,7 +50,7 @@ class LauncherManager:
                         )
                         car_test.show_main_ui()
                     elif current_index == 1:
-                        from server.gui.app.ptzOpera import PTZOpera
+                        from server.gui.app.ptz_opera import PTZOpera
 
                         ptz_opera = PTZOpera(
                             self.display,
@@ -60,7 +60,7 @@ class LauncherManager:
                         )
                         ptz_opera.show_main_ui()
                     elif current_index == 2:
-                        from server.gui.app.camBox import CamBox
+                        from server.gui.app.cam_box import CamBox
 
                         cam_box = CamBox(
                             self.display,

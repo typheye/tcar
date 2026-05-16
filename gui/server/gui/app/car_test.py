@@ -3,7 +3,7 @@
 
 import time
 from server.gui.public.graphics import Graphics
-from server.gui.public.fonts import fonts
+from server.gui.public.font_manager import fonts
 from server.gui.public.utils import press_key, wait_release, wait_press, get_core_status
 from media.config import *
 
