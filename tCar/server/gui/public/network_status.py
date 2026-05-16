@@ -5,7 +5,7 @@ import threading
 import time
 import urllib.request
 import json
-from server.gui.public.rpc_kits import rpc_client
+from server.rpc.car_rpc import rpc_client
 from server.gui.public.utils import *
 from media.config import *
 
