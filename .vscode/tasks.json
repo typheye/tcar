@@ -1,0 +1,96 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "运行",
+            "type": "shell",
+            "icon": {
+                "id": "play",
+                "tooltip": "上传并重启远程服务"
+            },
+            "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+            "args": [
+                "--reset"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "日志",
+            "type": "shell",
+            "icon": {
+                "id": "output",
+                "tooltip": "查看 gui-app.service 实时日志"
+            },
+            "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+            "args": [
+                "--log"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "SSH",
+            "type": "shell",
+            "icon": {
+                "id": "terminal",
+                "tooltip": "打开 SSH 连接到树莓派"
+            },
+            "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+            "args": [
+                "--ssh"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "重启",
+            "type": "shell",
+            "icon": {
+                "id": "refresh",
+                "tooltip": "重启树莓派"
+            },
+            "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+            "args": [
+                "--reboot"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "格式化",
+            "type": "shell",
+            "icon": {
+                "id": "trash",
+                "tooltip": "删除树莓派 ~/gui 目录"
+            },
+            "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+            "args": [
+                "--format"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

@@ -3,8 +3,8 @@
 
 import time
 import RPi.GPIO as GPIO
-from system.framework.public.utils import wait_release, wait_press, press_key
-from system.config import *
+from server.gui.public.utils import wait_release, wait_press, press_key
+from media.config import *
 
 class ButtonManager:
     def __init__(self):

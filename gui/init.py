@@ -4,14 +4,14 @@
 import time
 import traceback
 import spidev as SPI  # 添加SPI导入
-from system.framework.public.utils import log, setup_gpio, press_key, wait_release
-from system.framework.display.lcd import DisplayManager
+from server.gui.public.utils import log, setup_gpio, press_key, wait_release
+from server.gui.public.lcd import DisplayManager
 from hardware.buttons import ButtonManager
 from hardware.ina219 import INA219
-from system.framework.public.status import NetworkStatus
-from system.framework.public.info import SystemInfo
-from system.framework.screens import ScreenManager
-from system.config import *
+from server.gui.public.status import NetworkStatus
+from server.gui.public.info import SystemInfo
+from server.gui.launcher import ScreenManager
+from media.config import *
 
 
 class GUI:
