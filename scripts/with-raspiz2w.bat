@@ -33,17 +33,17 @@ goto show_help
 
 :update_restart
 echo [1/2] Uploading files to Raspberry Pi...
-scp -r "%BASE_DIR%\gui" pi@%IP%:%TARGET_DIR%
+scp -r "%BASE_DIR%\tCar" pi@%IP%:%TARGET_DIR%
 if !errorlevel! neq 0 (
   echo [ERROR] Upload failed!
   exit /b 1
 )
 echo [2/2] Restarting JanPNP service...
-ssh pi@%IP% "sudo systemctl stop gui-app.service"
+ssh pi@%IP% "sudo systemctl stop tcar.service"
 timeout /t 2 /nobreak >nul
 ssh pi@%IP% "sudo pkill -f 'python.*init.py' || true"
 timeout /t 1 /nobreak >nul
-ssh pi@%IP% "sudo systemctl start gui-app.service"
+ssh pi@%IP% "sudo systemctl start tcar.service"
 echo [SUCCESS] Service restarted.
 exit /b 0
 
@@ -64,7 +64,7 @@ exit /b 0
 
 :format
 echo Formatting Raspberry Pi directory...
-ssh pi@%IP% "sudo rm -rf ~/gui"
+ssh pi@%IP% "sudo rm -rf ~/tCar"
 echo [SUCCESS] Directory removed.
 exit /b 0
 
@@ -74,7 +74,7 @@ echo Viewing janpnp.service real-time logs
 echo ================================
 echo Press Ctrl+C to exit log view
 echo ================================
-ssh pi@%IP% "sudo journalctl -u gui-app.service -f"
+ssh pi@%IP% "sudo journalctl -u tcar.service -f"
 exit /b 0
 
 :show_help

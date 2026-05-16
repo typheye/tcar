@@ -38,21 +38,21 @@ sudo systemctl start set-eth-speed.service
 sudo systemctl status set-eth-speed.service
 ```
 
-## gui-app.service
+## tcar.service
 
 设置网口速度以匹配。
 
 ```ini
 [Unit]
-Description=GUI Application Service
+Description=tCar Service
 After=multi-user.target
 Wants=multi-user.target
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/gui
-ExecStart=/usr/bin/python3 /home/pi/gui/init.py
+WorkingDirectory=/home/pi/tCar
+ExecStart=/usr/bin/python3 /home/pi/tCar/init.py
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
@@ -66,14 +66,14 @@ WantedBy=multi-user.target
 ### 安装启用
 
 ```bash
-sudo nano /etc/systemd/system/gui-app.service
+sudo nano /etc/systemd/system/tcar.service
 sudo systemctl daemon-reload
-sudo systemctl enable gui-app.service
-sudo systemctl start gui-app.service
+sudo systemctl enable tcar.service
+sudo systemctl start tcar.service
 ```
 
 ### 验证状态
 
 ```bash
-sudo systemctl status gui-app.service
+sudo systemctl status tcar.service
 ```

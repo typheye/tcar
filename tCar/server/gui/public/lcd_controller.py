@@ -53,7 +53,7 @@ class LCDController:
         with self.create_canvas() as canvas:
             canvas.draw.rectangle((0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), fill=COLOR_BLACK)
             try:
-                img = Image.open("/home/pi/gui/system/media/splash.png").convert("RGBA")
+                img = Image.open("./media/splash.png").convert("RGBA")
                 img = img.resize((SCREEN_WIDTH, SCREEN_HEIGHT), Image.ANTIALIAS)
                 canvas.draw.bitmap((0, 0), img, fill=None)
             except Exception as e:
