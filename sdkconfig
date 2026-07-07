@@ -594,13 +594,6 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
-# Typheye Car Server
-#
-CONFIG_TCAR_LED_GPIO=21
-CONFIG_TCAR_LED_ACTIVE_LOW=y
-# end of Typheye Car Server
-
-#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_DEBUG=y

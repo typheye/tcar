@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/static/style.css">
+    <title>Typheye Car</title>
+</head>
+
+<body>
+    <main>
+        <div class="top">
+            <div class="brand">
+                <h1>Typheye Car</h1>
+                <p data-i="subtitle"></p>
+            </div><button id="themeBtn" class="iconBtn" aria-label="theme"></button>
+        </div>
+        <section class="status" id="status"></section>
+        <section class="layout">
+            <div class="card">
+                <div class="head">
+                    <h2 data-i="onlineDevices"></h2><span class="muted" id="devCount"></span>
+                </div>
+                <div id="devices"></div>
+            </div>
+            <div class="card">
+                <div class="head">
+                    <h2 data-i="settings"></h2>
+                </div>
+                <div class="settings">
+                    <div class="row"><b data-i="breathLed"></b><label class="switch"><input id="led"
+                                type="checkbox"><span class="slider"></span></label></div>
+                    <div class="row"><b data-i="shareWlan"></b><label class="switch"><input id="share"
+                                type="checkbox"><span class="slider"></span></label></div>
+                    <div class="row"><b data-i="scanNetworks"></b><button id="scanBtn" class="iconAction"
+                            aria-label="scan"></button></div>
+                    <div class="row"><b data-i="savedNetworks"></b><button id="savedBtn" class="iconAction"
+                            aria-label="saved networks"></button></div>
+                    <div class="row"><b data-i="language"></b><button id="langBtn" class="iconAction"
+                            aria-label="language"></button></div>
+                </div>
+            </div>
+        </section>
+    </main>
+    <div class="modal" id="scanModal">
+        <div class="box">
+            <div class="head">
+                <h3 data-i="nearby"></h3>
+            </div>
+            <div id="scanList"></div>
+            <div class="actions"><button id="refreshScanBtn" data-i="refresh"></button><button id="closeScanBtn"
+                    data-i="close"></button></div>
+        </div>
+    </div>
+    <div class="modal" id="savedModal">
+        <div class="box">
+            <div class="head">
+                <h3 data-i="savedNetworks"></h3>
+            </div>
+            <div id="savedList"></div>
+            <div class="actions"><button data-close="savedModal" data-i="close"></button></div>
+        </div>
+    </div>
+    <div class="modal" id="langModal">
+        <div class="box smallBox">
+            <div class="head">
+                <h3 data-i="language"></h3>
+            </div>
+            <div class="langOptions"><button class="choiceBtn" type="button" data-lang="auto"
+                    id="autoLangOpt">Auto</button><button class="choiceBtn" type="button"
+                    data-lang="zh">&#20013;&#25991;</button><button class="choiceBtn" type="button"
+                    data-lang="en">English</button></div>
+            <div class="actions"><button data-close="langModal" data-i="close"></button></div>
+        </div>
+    </div>
+    <div class="modal" id="editModal">
+        <div class="box">
+            <div class="head">
+                <h3 id="editTitle"></h3>
+            </div>
+            <div class="form"><label data-i="password"></label><input id="pass" type="password"></div>
+            <div class="actions"><button onclick="backEdit()" data-i="back"></button><button id="delBtn"
+                    data-i="delete"></button><button class="solid" id="saveBtn" data-i="save"></button></div>
+        </div>
+    </div>
+    <div class="modal" id="noticeModal">
+        <div class="box smallBox">
+            <div class="head">
+                <h3 id="noticeTitle"></h3>
+            </div>
+            <div id="noticeBody"></div>
+            <div class="actions"><button id="noticeCancel" data-i="cancel"></button><button id="noticeClose"
+                    data-i="close"></button><button class="solid" id="noticeOk" data-i="ok"></button></div>
+        </div>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
