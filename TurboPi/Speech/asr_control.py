@@ -144,5 +144,5 @@ if __name__ == "__main__":
     while True:
         for cmd, id in announcements:
             asr_module.speak(cmd, id)
-            time.sleep(5) 
+            time.sleep(1) 
         

@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # coding=utf8
-# 闁哄倸娲ｅ▎銏ゅ触? smpu.py
+# 闂佸搫鍊稿ú锝呪枎閵忋倕瑙? smpu.py
 
 import smbus
 import math
@@ -18,7 +18,7 @@ def wrap_angle(angle):
     """Wrap degrees to [-180, 180)."""
     return (angle + 180.0) % 360.0 - 180.0
 
-# ============ 閻℃帒鎳庨敍鎰枖閵忋垼顫?============
+# ============ 闁烩剝甯掗幊搴ㄦ晬閹邦兘鏋栭柕蹇嬪灱椤?============
 class Sonar:
     def __init__(self):
         self.i2c_addr = 0x77
@@ -580,7 +580,7 @@ class MPU6050DMP:
             self.DMP_D_EXT_GYRO_BIAS_Z,
         ]
         for address, raw_offset in zip(addresses, gyro_offset):
-            bias_q16 = int((float(raw_offset) / 65.5) * 65536.0)
+            bias_q16 = int((float(raw_offset) / 16.4) * 65536.0)
             dmp_bias = int((bias_q16 * self.DMP_GYRO_SF) >> 30)
             self._write_dmp_i32(address, dmp_bias)
 
@@ -693,20 +693,20 @@ class MPU6050:
         self.calibrate_gyro()
         self.estimator = AttitudeEstimator(sample_freq=100)
         
-        # 闁稿繐鐗愮换宥囨偘鐏炶偐顏辨繛鍫濈仛濡炲倿姊荤壕瀣靛敤濠殿喗瀵ч埀顑胯兌鑿欓悗?
+        # 闂佺绻愰悧鎰崲瀹ュ洦鍋橀悘鐐跺亹椤忚鲸绻涢崼婵堜粵婵＄偛鍊垮鑽ゅ鐎ｉ潧鏁ゆ繝娈垮枟鐎笛囧焵椤戣儻鍏岄懣娆撴倵?
         print("Waiting for attitude to stabilize...")
         for i in range(50):
             ax, ay, az, gx, gy, gz = self.read_all()
             ax_g = ax / 16384.0
             ay_g = ay / 16384.0
             az_g = az / 16384.0
-            gx_dps = gx / 65.5
-            gy_dps = gy / 65.5
-            gz_dps = gz / 65.5
+            gx_dps = gx / 16.4
+            gy_dps = gy / 16.4
+            gz_dps = gz / 16.4
             self.estimator.update(gx_dps, gy_dps, gz_dps, ax_g, ay_g, az_g)
             time.sleep(0.01)
         
-        # 闁哄秮鈧啿娅欑憸鐗堝浮濞?
+        # 闂佸搫绉埀顒€鍟垮▍娆戞喐閻楀牆娴繛?
         self.calibrate_attitude_zero()
         self._init_dmp()
         self.calibrate_mag_zero()
@@ -725,7 +725,7 @@ class MPU6050:
             return [0] * length
 
     def _init_mpu6050(self):
-        """闁告帗绻傞～鎰板礌閺堟瓍U6050"""
+        """闂佸憡甯楃换鍌烇綖閹版澘绀岄柡鍫熺搷U6050"""
         print("Initializing MPU6050...")
         
         self._write_byte(0x6B, 0x00)
@@ -734,7 +734,7 @@ class MPU6050:
         time.sleep(0.1)
         self._write_byte(0x19, 0x09)
         self._write_byte(0x1A, 0x06)
-        self._write_byte(0x1B, 0x08)
+        self._write_byte(0x1B, 0x18)
         self._write_byte(0x1C, 0x00)
         self._write_byte(0x23, 0x00)
         self._write_byte(0x38, 0x00)
@@ -766,9 +766,9 @@ class MPU6050:
         for _ in range(samples):
             ax, ay, az, gx, gy, gz = self.read_all()
             self.estimator.update(
-                gx / 65.5,
-                gy / 65.5,
-                gz / 65.5,
+                gx / 16.4,
+                gy / 16.4,
+                gz / 16.4,
                 ax / 16384.0,
                 ay / 16384.0,
                 az / 16384.0,
@@ -827,8 +827,8 @@ class MPU6050:
             qw, qx, qy, qz = self._output_quat_from_angles(pitch, roll, corrected_yaw)
             return (pitch, roll, corrected_yaw, qw, qx, qy, qz)
         strength = self.last_mag_debug.get("strength", 0.0)
-        min_strength = max(35.0, self.mag.field_radius * 0.65)
-        max_strength = max(min_strength + 1.0, self.mag.field_radius * 1.45)
+        min_strength = max(35.0, self.mag.field_radius * 0.45)
+        high_strength = max(min_strength + 1.0, self.mag.field_radius * 2.8)
         now = time.time()
         if self.mag_prev_yaw is None:
             mag_delta = 0.0
@@ -845,8 +845,6 @@ class MPU6050:
         reject = None
         if strength < min_strength:
             reject = "weak"
-        elif strength > max_strength:
-            reject = "strong"
         elif abs(gz_dps) >= 2.0:
             reject = "turn"
         elif abs(pitch) >= 20.0 or abs(roll) >= 20.0:
@@ -871,6 +869,7 @@ class MPU6050:
             self.last_mag_debug["step"] = 0.0
         self.last_mag_debug["stable"] = mag_stable_time
         self.last_mag_debug["delta"] = mag_delta
+        self.last_mag_debug["strength_warn"] = strength > high_strength
         corrected_yaw = wrap_angle(yaw + self.mag_yaw_correction)
         qw, qx, qy, qz = self._output_quat_from_angles(pitch, roll, corrected_yaw)
         return (pitch, roll, corrected_yaw, qw, qx, qy, qz)
@@ -891,6 +890,7 @@ class MPU6050:
         step = dbg.get("step", 0.0)
         stable = dbg.get("stable", 0.0)
         delta = dbg.get("delta", 0.0)
+        strength_mark = "!" if dbg.get("strength_warn") else " "
         def fmt(values):
             return f"{values[0]:7.1f},{values[1]:7.1f},{values[2]:7.1f}"
         def fmt_angle(value):
@@ -900,7 +900,7 @@ class MPU6050:
             f"raw[{fmt(raw)}] map[{fmt(mapped)}] cal[{fmt(cal)}] "
             f"head:{fmt_angle(heading)} magYaw:{fmt_angle(rel_yaw)} "
             f"err:{fmt_angle(yaw_error)} corr:{self.mag_yaw_correction:7.1f} "
-            f"str:{strength:6.1f} use:{used} {reject} "
+            f"str:{strength:6.1f}{strength_mark} use:{used} {reject} "
             f"step:{step:5.2f} st:{stable:4.1f}s d:{delta:4.1f}"
         )
 
@@ -981,7 +981,7 @@ class MPU6050:
 
     def read_all(self):
         """Read raw accel and gyro data."""
-        # 闁告梻濞€閳ь剛鍠庣€?
+        # 闂佸憡姊绘繛鈧柍褜鍓涢崰搴ｂ偓?
         accel = self._read_word_array(0x3B, 6)
         ax = (accel[0] << 8) + accel[1]
         ay = (accel[2] << 8) + accel[3]
@@ -990,7 +990,7 @@ class MPU6050:
         if ay >= 0x8000: ay -= 0x10000
         if az >= 0x8000: az -= 0x10000
         
-        # 闂傚嫧鍋撻柧鏄忔〃閸?
+        # 闂傚倸瀚ч崑鎾绘煣閺勫繑銆冮柛?
         gyro = self._read_word_array(0x43, 6)
         gx = (gyro[0] << 8) + gyro[1]
         gy = (gyro[2] << 8) + gyro[3]
@@ -1016,7 +1016,7 @@ class MPU6050:
                 pitch, roll, yaw = self.estimator._euler_from_quat(rel_q)
                 pitch, roll, yaw, out_q = self._apply_output_axis_signs(pitch, roll, yaw, rel_q)
                 qw, qx, qy, qz = out_q
-                pitch, roll, yaw, qw, qx, qy, qz = self._fuse_mag_yaw(pitch, roll, yaw, qw, qx, qy, qz, gz / 65.5)
+                pitch, roll, yaw, qw, qx, qy, qz = self._fuse_mag_yaw(pitch, roll, yaw, qw, qx, qy, qz, gz / 16.4)
                 self.last_dmp_attitude = (pitch, roll, yaw, qw, qx, qy, qz)
                 return (pitch, roll, yaw, qw, qx, qy, qz, ax, ay, az, gx, gy, gz)
             if self.last_dmp_attitude:
@@ -1027,9 +1027,9 @@ class MPU6050:
         ay_g = ay / 16384.0
         az_g = az / 16384.0
         
-        gx_dps = gx / 65.5
-        gy_dps = gy / 65.5
-        gz_dps = gz / 65.5
+        gx_dps = gx / 16.4
+        gy_dps = gy / 16.4
+        gz_dps = gz / 16.4
         
         self.estimator.update(gx_dps, gy_dps, gz_dps, ax_g, ay_g, az_g)
         
@@ -1044,8 +1044,8 @@ class MPU6050:
         pitch, roll, yaw, qw, qx, qy, qz = self._fuse_mag_yaw(pitch, roll, yaw, qw, qx, qy, qz, gz_dps)
         return (pitch, roll, yaw, qw, qx, qy, qz, ax, ay, az, gx, gy, gz)
         
-        # 闁稿繑濞婇弫顓熺┍椤旂⒈妲? 缂傚倵鏅滈弬浣烘偘閵夈儰缂?(闁哄啫顑堝ù?0閹烘娊宕ｅΟ鍝勵嚙270閹?闁?缂傚倵鏅滈弬?1/3)
-        # 濠碘€冲€归悘澶愬籍鐎ｎ厽绁?0閹烘娊宕ｅΟ鍝勵嚙270閹烘娊鏁嶇仦钘夌仧缂傚倵鏅滈弬?= 90/270 = 1/3
+        # 闂佺绻戞繛濠囧极椤撶喓鈹嶆い鏃傗拡濡? 缂傚倸鍊甸弲婊堝棘娴ｇ儤鍋橀柕澶堝劙缂?(闂佸搫鍟鍫澝?0闁圭儤濞婂畷锝呂熼崫鍕靛殭270闁?闂?缂傚倸鍊甸弲婊堝棘?1/3)
+        # 婵犵鈧啿鈧綊鎮樻径鎰睄閻庯綆鍘界粊?0闁圭儤濞婂畷锝呂熼崫鍕靛殭270闁圭儤濞婇弫宥囦沪閽樺浠х紓鍌氬€甸弲婊堝棘?= 90/270 = 1/3
         scale = 1.0 / 3.0 * 10
         pitch *= scale
         roll *= scale
@@ -1054,9 +1054,9 @@ class MPU6050:
         return (pitch, roll, yaw, ax, ay, az, gx, gy, gz)
 
 
-# ============ UDP闁哄牆绉存慨鐔煎闯?============
+# ============ UDP闂佸搫鐗嗙粔瀛樻叏閻旂厧闂?============
 class SensorServer:
-    def __init__(self, ip='192.168.66.5', port=8888):
+    def __init__(self, ip='192.168.66.3', port=8888):
         self.ip = ip
         self.port = port
         self.mpu = MPU6050()
@@ -1131,3 +1131,4 @@ if __name__ == "__main__":
     else:
         server = SensorServer()
         server.run()
+
