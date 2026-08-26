@@ -8,7 +8,7 @@ a = Analysis(
     pathex=[str(source_root)],
     binaries=[],
     datas=[(str(root / "assets" / "favicon.ico"), "tcarkit/assets")],
-    hiddenimports=["PyQt5", "PyQt5.QtOpenGL", "OpenGL", "psutil"],
+    hiddenimports=["PyQt5", "PyQt5.QtOpenGL", "OpenGL", "psutil", "pyqtgraph"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

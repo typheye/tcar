@@ -8,6 +8,7 @@ import struct
 import math
 import time
 import urllib.request
+import urllib.error
 from collections import deque
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
@@ -82,37 +83,71 @@ class UDPReceiver(QThread):
 
 class CameraReceiver(QThread):
     frame_received = pyqtSignal(QImage)
+    connection_status = pyqtSignal(bool)
 
-    def __init__(self, url="http://192.168.66.3:8080/?action=stream"):
+    def __init__(self, url="http://192.168.66.3:8080/?action=stream", max_fps=15):
         super().__init__()
         self.url = url
+        self.max_fps = max_fps
         self.running = True
+        self.connected = False
+
+    def _set_connected(self, connected):
+        if self.connected != connected:
+            self.connected = connected
+            self.connection_status.emit(connected)
 
     def run(self):
+        frame_interval = 1.0 / max(1, self.max_fps)
         while self.running:
             try:
-                request = urllib.request.Request(self.url, headers={"Cache-Control": "no-cache"})
-                with urllib.request.urlopen(request, timeout=2.0) as response:
+                request = urllib.request.Request(
+                    self.url,
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Pragma": "no-cache",
+                        "Connection": "close",
+                        "User-Agent": "tCarKit/1.0",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=1.5) as response:
                     buffer = bytearray()
                     last_emit = 0.0
                     while self.running:
-                        chunk = response.read(4096)
+                        chunk = response.read(8192)
                         if not chunk:
                             break
                         buffer.extend(chunk)
-                        start = buffer.find(b'\xff\xd8')
-                        end = buffer.find(b'\xff\xd9', start + 2) if start >= 0 else -1
-                        if start >= 0 and end >= 0:
-                            image = QImage.fromData(bytes(buffer[start:end + 2]), "JPG")
+
+                        while self.running:
+                            start = buffer.find(b'\xff\xd8')
+                            if start < 0:
+                                if len(buffer) > 65536:
+                                    del buffer[:-2]
+                                break
+                            if start:
+                                del buffer[:start]
+                            end = buffer.find(b'\xff\xd9', 2)
+                            if end < 0:
+                                break
+
+                            jpg = bytes(buffer[:end + 2])
                             del buffer[:end + 2]
                             now = time.monotonic()
-                            if not image.isNull() and now - last_emit >= 1.0 / 15.0:
+                            if now - last_emit < frame_interval:
+                                continue
+                            image = QImage.fromData(jpg, "JPG")
+                            if not image.isNull():
+                                self._set_connected(True)
                                 self.frame_received.emit(image)
                                 last_emit = now
-                        elif len(buffer) > 2 * 1024 * 1024:
+                        if len(buffer) > 512 * 1024:
                             buffer.clear()
-            except (OSError, ValueError):
-                self.msleep(500)
+            except (OSError, ValueError, urllib.error.URLError):
+                self._set_connected(False)
+                self.msleep(250)
+
+        self._set_connected(False)
 
     def stop(self):
         self.running = False

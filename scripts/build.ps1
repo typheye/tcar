@@ -49,7 +49,7 @@ function Invoke-PyInstallerSpec {
 }
 
 try {
-    & python -c "import PyInstaller, PyQt5, OpenGL, psutil"
+    & python -c "import PyInstaller, PyQt5, OpenGL, psutil, pyqtgraph"
     if ($LASTEXITCODE -ne 0) {
         throw "Missing build dependency. Run scripts\setup-conda.bat first."
     }
