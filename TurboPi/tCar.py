@@ -10,6 +10,7 @@ import struct
 import sys
 import os
 import json
+import threading
 sys.path.append('/home/pi/TurboPi/')
 from smbus2 import SMBus, i2c_msg
 
@@ -60,7 +61,7 @@ class Magnetometer:
         self.address = None
         self.kind = None
         self.available = False
-        self.cal_file = cal_file or os.path.join(os.path.dirname(__file__), "mag_calibration.json")
+        self.cal_file = cal_file or os.path.join(os.path.dirname(__file__), "Utils", "mag_calibration.json")
         self.offset = [0.0, 0.0, 0.0]
         self.scale = [1.0, 1.0, 1.0]
         self.axis_map = list(self.COORDINATE_AXIS_MAP)
@@ -469,7 +470,7 @@ class MPU6050DMP:
         self.address = address
         self.enabled = False
         self.packet_size = self.PACKET_SIZE
-        self.firmware_path = os.path.join(os.path.dirname(__file__), "dmp_firmware.bin")
+        self.firmware_path = os.path.join(os.path.dirname(__file__), "Utils", "dmp_firmware.bin")
 
     def _write_byte(self, reg, value):
         self.bus.write_byte_data(self.address, reg, value & 0xFF)
@@ -1072,6 +1073,38 @@ class SensorServer:
         finally:
             self.sock.close()
 
+    def stop(self):
+        self.running = False
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+class TCarService:
+    """Lifecycle wrapper used by TurboPi.py."""
+
+    def __init__(self, ip='192.168.66.3', port=8888):
+        self.ip = ip
+        self.port = port
+        self.server = None
+        self.thread = None
+
+    def start(self):
+        if self.thread and self.thread.is_alive():
+            return
+        self.server = SensorServer(self.ip, self.port)
+        self.thread = threading.Thread(target=self.server.run, name='tcar-sensor', daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        if self.server:
+            self.server.stop()
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+        self.server = None
+        self.thread = None
+
 
 if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] == "--mag-cal":
@@ -1085,5 +1118,4 @@ if __name__ == "__main__":
         mag = Magnetometer(bus)
         mag.calibrate_hard_soft_iron(seconds)
     else:
-        server = SensorServer()
-        server.run()
+        print("tCar sensor service is managed by TurboPi.py")

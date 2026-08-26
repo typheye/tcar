@@ -6,7 +6,7 @@
             "type": "shell",
             "icon": {
                 "id": "play",
-                "tooltip": "上传并重启远程服务"
+                "tooltip": "上传姿态/磁航向修复并重启远程服务"
             },
             "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
             "args": [

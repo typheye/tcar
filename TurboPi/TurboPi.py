@@ -10,6 +10,7 @@ import logging
 import threading
 import RPCServer
 import MjpgServer
+import tCar
 import numpy as np
 import subprocess
 import signal
@@ -22,6 +23,7 @@ import Functions.Avoidance as Avoidance
 import Functions.RemoteControl as RemoteControl
 
 PS_CONTROLLER_PROC = None  # PS2控制器进程
+TCAR_SERVICE = None
 RUNNING = True  # 全局运行标志
 
 # TurboPi主程序
@@ -39,7 +41,7 @@ def setBuzzer(timer):
 
 def cleanup():
     """清理资源"""
-    global PS_CONTROLLER_PROC, RUNNING
+    global PS_CONTROLLER_PROC, TCAR_SERVICE, RUNNING
     
     RUNNING = False
     print("正在清理资源...")
@@ -65,6 +67,13 @@ def cleanup():
             print("PS2控制器已终止")
         except Exception as e:
             print(f"终止PS2控制器时出错: {e}")
+
+    if TCAR_SERVICE:
+        try:
+            TCAR_SERVICE.stop()
+        except Exception as e:
+            print(f"停止tCar传感器服务时出错: {e}")
+        TCAR_SERVICE = None
     
     # 清理Board资源
     try:
@@ -112,9 +121,12 @@ VD.start()
 
 def startTruckPi():
     global HWEXT, HWSONIC
-    global voltage, RUNNING
+    global voltage, TCAR_SERVICE, RUNNING
     
     BZ.init()
+
+    TCAR_SERVICE = tCar.TCarService()
+    TCAR_SERVICE.start()
 
     previous_time = 0.00
     # 超声波开启后默认关闭灯
@@ -147,6 +159,13 @@ def startTruckPi():
 
     Running.cam = cam
 
+    def publish_camera():
+        while RUNNING:
+            MjpgServer.set_frame(cam.frame)
+            time.sleep(1.0 / 30.0)
+
+    threading.Thread(target=publish_camera, daemon=True).start()
+
     while RUNNING:  # 使用RUNNING标志控制循环
         
         time.sleep(0.03)
@@ -166,19 +185,7 @@ def startTruckPi():
                 if cam.frame is not None:
                     frame = cam.frame.copy()
                     img = Running.CurrentEXE().run(frame)
-                    if Running.RunningFunc == 9:
-                        MjpgServer.img_show = np.vstack((img, frame))
-                    elif Running.RunningFunc == 8:
-                        MjpgServer.img_show = cam.frame
-                    else:
-                        if voltage <= 7.2: 
-                            MjpgServer.img_show = cv2.putText(img, "Voltage:%.1fV"%voltage, (420, 460), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,0,255), 2)
-                        else:
-                            MjpgServer.img_show = cv2.putText(img, "Voltage:%.1fV"%voltage, (420, 460), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,255,0), 2)
-                else:
-                    MjpgServer.img_show = loading_picture
-            else:
-                MjpgServer.img_show = loading_picture
+            # Camera streaming is independent from gameplay processing.
                 
         except KeyboardInterrupt:
             print('收到键盘中断')
