@@ -1,0 +1,8 @@
+{
+  "name": "tcarkit",
+  "display_name": "tCarKit",
+  "version": "0.1.0",
+  "developer": "tCar Development Team",
+  "description": "tCar desktop monitor",
+  "executable": "tCarKit.exe"
+}

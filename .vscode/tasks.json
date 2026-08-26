@@ -1,0 +1,65 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Play",
+      "detail": "Play tCarKit",
+      "type": "shell",
+      "icon": {
+        "id": "play",
+        "tooltip": "Play tCarKit"
+      },
+      "command": "C:/Users/Typheye/.conda/envs/tcar/python.exe -m tcarkit.app",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}/src"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "detail": "Build tCarKit.exe via PyInstaller.",
+      "type": "shell",
+      "icon": {
+        "id": "build",
+        "tooltip": "Build tCarKit"
+      },
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/build.ps1"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Clean",
+      "detail": "Remove build/, dist/ and Python cache files.",
+      "type": "shell",
+      "icon": {
+        "id": "trash",
+        "tooltip": "Clean all"
+      },
+      "command": "${workspaceFolder}/scripts/clean.bat",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ]
+}
