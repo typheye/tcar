@@ -56,8 +56,6 @@ def loadFunc(newf):
             if RunningFunc > 1:
                 FUNCTIONS[RunningFunc].exit()
             RunningFunc = newf[0]
-            cam.camera_close()
-            cam.camera_open()
             print('RunningFunc', RunningFunc)
             if RunningFunc > 0:
                 FUNCTIONS[RunningFunc].init()
@@ -70,7 +68,6 @@ def unloadFunc(tmp = ()):
     if RunningFunc != 0:
         FUNCTIONS[RunningFunc].exit()
         RunningFunc = 0
-    cam.camera_close()
     return (True, (0,))
 
 def getLoadedFunc(newf):

@@ -68,6 +68,8 @@ class Magnetometer:
         self.axis_sign = list(self.COORDINATE_AXIS_SIGN)
         self.yaw_sign = 1.0
         self.yaw_zero = 0.0
+        self.declination = 0.0
+        self.calibrated = False
         self.weight = 0.001
         self.field_radius = 80.0
         self.last_heading = None
@@ -83,6 +85,7 @@ class Magnetometer:
             self.axis_map = list(self.COORDINATE_AXIS_MAP)
             self.axis_sign = list(self.COORDINATE_AXIS_SIGN)
             self.yaw_sign = float(cfg.get("yaw_sign", self.yaw_sign))
+            self.declination = float(cfg.get("declination", self.declination))
             self.weight = min(float(cfg.get("weight", self.weight)), self.weight)
             self.field_radius = float(cfg.get("field_radius", self.field_radius))
             if self._calibration_is_bad():
@@ -90,6 +93,7 @@ class Magnetometer:
                 self.scale = [1.0, 1.0, 1.0]
                 print("Mag calibration ignored: saturated/invalid calibration values")
                 return
+            self.calibrated = True
             print(f"Mag calibration loaded: {self.cal_file}")
         except Exception:
             print("Mag calibration not found, using raw magnetometer scale")
@@ -173,6 +177,12 @@ class Magnetometer:
     def is_saturated(self, raw):
         return any(v <= -4090 or v >= 4090 for v in raw)
 
+    def _field_is_valid(self, strength):
+        if not self.calibrated or self.field_radius <= 0.0:
+            return False
+        ratio = strength / self.field_radius
+        return 0.55 <= ratio <= 1.8
+
     def diagnostic(self, current_yaw=None):
         if not self.available:
             return None
@@ -186,8 +196,10 @@ class Magnetometer:
         rel_yaw = None
         yaw_error = None
         mx, my, _ = cal
-        if not saturated and abs(mx) + abs(my) >= 1e-6:
-            heading = wrap_angle(math.degrees(math.atan2(my, mx)))
+        strength = math.sqrt(mx * mx + my * my)
+        field_valid = self._field_is_valid(strength)
+        if field_valid and not saturated and abs(mx) + abs(my) >= 1e-6:
+            heading = (math.degrees(math.atan2(my, mx)) + self.declination) % 360.0
             rel_yaw = wrap_angle((heading - self.yaw_zero) * self.yaw_sign)
             if current_yaw is not None:
                 yaw_error = wrap_angle(rel_yaw - current_yaw)
@@ -200,18 +212,24 @@ class Magnetometer:
             "yaw_error": yaw_error,
             "kind": self.kind,
             "saturated": saturated,
-            "strength": math.sqrt(mx * mx + my * my),
+            "calibrated": self.calibrated,
+            "strength": strength,
+            "field_valid": field_valid,
         }
 
     def heading(self):
+        if not self.calibrated:
+            return None
         mag = self.read_calibrated()
         if mag is None:
             return None
         mx, my, _ = mag
         if abs(mx) + abs(my) < 1e-6:
             return None
-        heading = math.degrees(math.atan2(my, mx))
-        self.last_heading = wrap_angle(heading)
+        if not self._field_is_valid(math.sqrt(mx * mx + my * my)):
+            return None
+        heading = math.degrees(math.atan2(my, mx)) + self.declination
+        self.last_heading = heading % 360.0
         return self.last_heading
 
     def zero_yaw(self, samples=40):
@@ -287,8 +305,10 @@ class Magnetometer:
             "axis_map": self.axis_map,
             "axis_sign": self.axis_sign,
             "yaw_sign": self.yaw_sign,
+            "declination": self.declination,
             "weight": self.weight,
             "field_radius": self.field_radius,
+            "calibrated": True,
         }
         with open(self.cal_file, "w") as f:
             json.dump(cfg, f, indent=2)
@@ -297,6 +317,7 @@ class Magnetometer:
         print(f"  offset: {self.offset}")
         print(f"  scale:  {self.scale}")
         print(f"  field_radius: {self.field_radius:.1f}")
+        self.calibrated = True
         return True
 
 
@@ -417,7 +438,7 @@ class MPU6050DMP:
     """Minimal MPU6050 DMP/FIFO quaternion reader.
 
     MPU6050 DMP requires a firmware blob. This project uses the 3062-byte
-    libdriver firmware extracted to TurboPi/Utils/dmp_firmware.bin.
+    libdriver firmware stored as TurboPi/Firmware/quaternion.bin.
     If the blob is absent, this driver stays disabled and the software
     quaternion estimator is used.
     """
@@ -470,7 +491,9 @@ class MPU6050DMP:
         self.address = address
         self.enabled = False
         self.packet_size = self.PACKET_SIZE
-        self.firmware_path = os.path.join(os.path.dirname(__file__), "Utils", "dmp_firmware.bin")
+        self.firmware_path = os.path.join(
+            os.path.dirname(__file__), "Firmware", "quaternion.bin"
+        )
 
     def _write_byte(self, reg, value):
         self.bus.write_byte_data(self.address, reg, value & 0xFF)
@@ -679,6 +702,11 @@ class MPU6050:
         self.bus = smbus.SMBus(bus)
         self.address = address
         self.gyro_offset = [0.0, 0.0, 0.0]
+        self.imu_cal_file = os.path.join(
+            os.path.dirname(__file__), "Utils", "imu_calibration.json"
+        )
+        self.gyro_yaw_scale = 1.0
+        self._load_imu_calibration()
         self.mag = Magnetometer(self.bus)
         self.last_mag_debug = None
         self.mag_yaw_correction = 0.0
@@ -689,6 +717,9 @@ class MPU6050:
         self.use_dmp = False
         self.dmp_zero_q = [1.0, 0.0, 0.0, 0.0]
         self.last_dmp_attitude = None
+        self.dmp_prev_raw_yaw = None
+        self.dmp_raw_yaw_unwrapped = 0.0
+        self.dmp_corrected_yaw = 0.0
         
         self._init_mpu6050()
         self.calibrate_gyro()
@@ -710,7 +741,25 @@ class MPU6050:
         # 闂佸搫绉埀顒€鍟垮▍娆戞喐閻楀牆娴繛?
         self.calibrate_attitude_zero()
         self._init_dmp()
-        self.calibrate_mag_zero()
+
+    def _load_imu_calibration(self):
+        try:
+            with open(self.imu_cal_file, "r") as f:
+                cfg = json.load(f)
+            scale = float(cfg.get("gyro_yaw_scale", 1.0))
+            if not 0.5 <= scale <= 1.5:
+                raise ValueError("gyro_yaw_scale is outside 0.5..1.5")
+            self.gyro_yaw_scale = scale
+            print(f"Yaw scale loaded: {self.gyro_yaw_scale:.6f}")
+        except FileNotFoundError:
+            print("Yaw scale calibration not found, using 1.0")
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            print(f"Yaw scale calibration ignored: {exc}")
+
+    def _save_imu_calibration(self):
+        with open(self.imu_cal_file, "w") as f:
+            json.dump({"gyro_yaw_scale": self.gyro_yaw_scale}, f, indent=2)
+            f.write("\n")
 
     def _write_byte(self, reg, val):
         try:
@@ -890,6 +939,7 @@ class MPU6050:
             time.sleep(0.005)
         if last_q:
             self.dmp_zero_q = list(last_q)
+            self._reset_dmp_yaw_tracking()
             print("  DMP attitude zero calibrated")
         else:
             print("  DMP zero skipped: no FIFO quaternion")
@@ -920,6 +970,69 @@ class MPU6050:
 
     def _relative_dmp_quaternion(self, q):
         return self._normalize_quat(self._quat_mul(self._quat_conj(self.dmp_zero_q), q))
+
+    def _reset_dmp_yaw_tracking(self):
+        self.dmp_prev_raw_yaw = None
+        self.dmp_raw_yaw_unwrapped = 0.0
+        self.dmp_corrected_yaw = 0.0
+
+    def _correct_dmp_yaw(self, raw_yaw, gz_dps):
+        """Keep a continuous DMP yaw and correct its gyro scale.
+
+        MPU6050 has no absolute yaw reference. Small DMP changes are therefore
+        frozen while the raw Z gyro says the car is stationary; moving deltas
+        remain independent from the magnetometer and use the calibrated scale.
+        """
+        if self.dmp_prev_raw_yaw is None:
+            self.dmp_prev_raw_yaw = raw_yaw
+            return 0.0
+
+        delta = wrap_angle(raw_yaw - self.dmp_prev_raw_yaw)
+        self.dmp_prev_raw_yaw = raw_yaw
+        if abs(gz_dps) < 0.35 and abs(delta) < 0.5:
+            delta = 0.0
+        self.dmp_raw_yaw_unwrapped += delta
+        self.dmp_corrected_yaw += delta * self.gyro_yaw_scale
+        return wrap_angle(self.dmp_corrected_yaw)
+
+    def calibrate_yaw_scale(self, turns=3.0, seconds=25.0):
+        """Measure DMP yaw scale while the car is turned exact full circles."""
+        if not self.use_dmp:
+            print("Yaw scale calibration requires a working DMP")
+            return False
+        turns = abs(float(turns))
+        seconds = max(5.0, float(seconds))
+        if turns < 1.0:
+            print("Yaw scale calibration requires at least one full turn")
+            return False
+
+        previous_scale = self.gyro_yaw_scale
+        self.gyro_yaw_scale = 1.0
+        self._reset_dmp_yaw_tracking()
+        print(
+            f"Rotate the whole car exactly {turns:g} full turns in one direction "
+            f"within {seconds:g} seconds, then hold it still."
+        )
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self.get_angles()
+            time.sleep(0.01)
+
+        measured = abs(self.dmp_raw_yaw_unwrapped)
+        expected = turns * 360.0
+        if measured < expected * 0.5 or measured > expected * 1.5:
+            self.gyro_yaw_scale = previous_scale
+            print(
+                f"Yaw scale calibration failed: measured {measured:.1f} deg, "
+                f"expected about {expected:.1f} deg"
+            )
+            return False
+
+        self.gyro_yaw_scale = expected / measured
+        self._save_imu_calibration()
+        print(f"Yaw scale calibrated: {self.gyro_yaw_scale:.6f}")
+        print(f"  measured: {measured:.1f} deg, reference: {expected:.1f} deg")
+        return True
 
     def _apply_output_axis_signs(self, pitch, roll, yaw, q):
         return (
@@ -963,9 +1076,12 @@ class MPU6050:
             dmp_q = self.dmp.read_quaternion()
             if dmp_q:
                 rel_q = self._relative_dmp_quaternion(dmp_q)
-                pitch, roll, yaw = self.estimator._euler_from_quat(rel_q)
-                pitch, roll, yaw, out_q = self._apply_output_axis_signs(pitch, roll, yaw, rel_q)
-                qw, qx, qy, qz = out_q
+                raw_pitch, raw_roll, raw_yaw = self.estimator._euler_from_quat(rel_q)
+                pitch, roll, raw_yaw, _ = self._apply_output_axis_signs(
+                    raw_pitch, raw_roll, raw_yaw, rel_q
+                )
+                yaw = self._correct_dmp_yaw(raw_yaw, gz / 16.4)
+                qw, qx, qy, qz = self._output_quat_from_angles(pitch, roll, yaw)
                 pitch, roll, yaw, qw, qx, qy, qz = self._fuse_mag_yaw(pitch, roll, yaw, qw, qx, qy, qz, gz / 16.4)
                 self.last_dmp_attitude = (pitch, roll, yaw, qw, qx, qy, qz)
                 return (pitch, roll, yaw, qw, qx, qy, qz, ax, ay, az, gx, gy, gz)
@@ -980,6 +1096,9 @@ class MPU6050:
         gx_dps = gx / 16.4
         gy_dps = gy / 16.4
         gz_dps = gz / 16.4
+        if abs(gz_dps) < 0.35:
+            gz_dps = 0.0
+        gz_dps *= self.gyro_yaw_scale
         
         self.estimator.update(gx_dps, gy_dps, gz_dps, ax_g, ay_g, az_g)
         
@@ -1117,5 +1236,19 @@ if __name__ == "__main__":
         bus = smbus.SMBus(1)
         mag = Magnetometer(bus)
         mag.calibrate_hard_soft_iron(seconds)
+    elif len(sys.argv) >= 2 and sys.argv[1] == "--yaw-cal":
+        turns = 3.0
+        seconds = 25.0
+        try:
+            if len(sys.argv) >= 3:
+                turns = float(sys.argv[2])
+            if len(sys.argv) >= 4:
+                seconds = float(sys.argv[3])
+        except ValueError:
+            print("Usage: python3 tCar.py --yaw-cal [turns] [seconds]")
+            sys.exit(2)
+        mpu = MPU6050()
+        if not mpu.calibrate_yaw_scale(turns, seconds):
+            sys.exit(1)
     else:
         print("tCar sensor service is managed by TurboPi.py")
