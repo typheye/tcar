@@ -18,7 +18,8 @@ REM ============================================================================
 
 setlocal enabledelayedexpansion
 
-set IP=192.168.66.3
+set IP=192.168.66.5
+@REM set IP=192.168.66.3
 set BASE_DIR=%~dp0..
 set TARGET_DIR=/home/pi
 
