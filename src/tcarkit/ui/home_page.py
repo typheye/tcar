@@ -92,7 +92,7 @@ class HomePage(QWidget):
             direction = directions[int((mag + 22.5) % 360.0 // 45.0)]
             self.mag.setText(f"Mag: {mag:6.1f} deg {direction}")
         else:
-            self.mag.setText("Mag: --")
+            self.mag.setText("Mag: calibration required")
 
     def stop(self):
         self.receiver.stop()
