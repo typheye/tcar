@@ -5,6 +5,10 @@
 import os
 import socket
 import sys
+import ipaddress
+import json
+import urllib.error
+import urllib.request
 
 from PyQt5.QtCore import QEvent, QObject, QSettings, Qt, QTimer
 from PyQt5.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QPixmap
@@ -108,6 +112,9 @@ class TitleBarFilter(QObject):
 
 
 class IPDialog(QDialog):
+    ROUTER_DISCOVERY_URL = "http://192.168.66.1/test"
+    AUTH_PORT = 8080
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("tCarKit")
@@ -115,29 +122,44 @@ class IPDialog(QDialog):
         self.setWindowFlags(
             (self.windowFlags() | Qt.Window) & ~Qt.WindowContextHelpButtonHint
         )
-        self.setFixedSize(380, 154)
-        self._edit_height = 154
+        self.setFixedSize(380, 202)
+        self._edit_height = 202
         self._settings = QSettings("tCar", "tCarKit")
         self._connecting = False
+        self._resolved_ip = None
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
         layout.setContentsMargins(20, 14, 20, 14)
         self.message = QLabel("")
         self.message.hide()
         layout.addWidget(self.message)
-        self.ip_label = QLabel("IP Address")
-        layout.addWidget(self.ip_label)
-        self.ip_edit = QLineEdit()
-        self.ip_edit.setPlaceholderText("Input your device's IP address")
-        self.ip_edit.setText(self._settings.value("connection/ip", "192.168.66.3"))
-        self.ip_edit.textChanged.connect(
-            lambda value: self._settings.setValue("connection/ip", value)
+        self.username_label = QLabel("Username")
+        layout.addWidget(self.username_label)
+        self.username_edit = QLineEdit()
+        self.username_edit.setPlaceholderText("Input your username")
+        self.username_edit.setText(self._settings.value("auth/user", "tcar"))
+        self.username_edit.textChanged.connect(
+            lambda value: self._settings.setValue("auth/user", value)
         )
-        self.ip_edit.returnPressed.connect(self._begin_connect)
-        layout.addWidget(self.ip_edit)
+        layout.addWidget(self.username_edit)
+        self.password_label = QLabel("Password")
+        layout.addWidget(self.password_label)
+        self.password_edit = QLineEdit()
+        self.password_edit.setPlaceholderText("Input your password")
+        self.password_edit.setEchoMode(QLineEdit.Password)
+        self.password_edit.setStyleSheet(
+            "QLineEdit { lineedit-password-character: 8901; }"
+        )
+        self.password_edit.setText(self._settings.value("auth/pass", "admin123"))
+        self.password_edit.textChanged.connect(
+            lambda value: self._settings.setValue("auth/pass", value)
+        )
+        self.password_edit.returnPressed.connect(self._begin_connect)
+        layout.addWidget(self.password_edit)
         self.connect_button = QPushButton("Connect")
         self.connect_button.setMinimumHeight(36)
         self.connect_button.clicked.connect(self._begin_connect)
+        layout.addSpacing(8)
         layout.addWidget(self.connect_button)
         self.progress = QProgressBar()
         self.progress.setMaximum(10)
@@ -149,13 +171,16 @@ class IPDialog(QDialog):
     def _begin_connect(self):
         if self._connecting:
             return
-        if not self.ip_edit.text().strip():
-            QMessageBox.warning(self, "tCarKit", "IP Address is required")
+        if not self.username_edit.text().strip():
+            QMessageBox.warning(self, "tCarKit", "Username is required")
+            return
+        if not self.password_edit.text():
+            QMessageBox.warning(self, "tCarKit", "Password is required")
             return
         self._connecting = True
         self.message.setText("Connecting...")
         self.message.show()
-        for widget in (self.ip_label, self.ip_edit, self.connect_button):
+        for widget in self._edit_widgets():
             widget.hide()
         self.progress.setValue(0)
         self.progress.show()
@@ -173,14 +198,21 @@ class IPDialog(QDialog):
             self._try_connect()
 
     def _try_connect(self):
-        ip = self.ip_edit.text().strip()
+        sock = None
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(2.0)
         try:
+            self.message.setText("Discovering Core host...")
+            QApplication.processEvents()
+            ip = self._discover_core_host()
+            self.message.setText(f"Authenticating {ip}...")
+            QApplication.processEvents()
+            self._authenticate(ip)
             sock.sendto(b"get_data", (ip, 8888))
             packet, _ = sock.recvfrom(1024)
             if len(packet) not in (40, 56, 60, 64, 68):
                 raise RuntimeError(f"Unexpected telemetry packet: {len(packet)} bytes")
+            self._resolved_ip = ip
             super().accept()
         except Exception as exc:
             self._reset(str(exc)[:100])
@@ -190,14 +222,75 @@ class IPDialog(QDialog):
     def _reset(self, message):
         self.progress.hide()
         self.message.hide()
-        for widget in (self.ip_label, self.ip_edit, self.connect_button):
+        for widget in self._edit_widgets():
             widget.show()
         self.setFixedSize(380, self._edit_height)
         self._connecting = False
         QMessageBox.warning(self, "tCarKit", f"Connection failed:\n{message}")
 
     def get_ip(self):
-        return self.ip_edit.text().strip()
+        return self._resolved_ip
+
+    def _edit_widgets(self):
+        return (
+            self.username_label,
+            self.username_edit,
+            self.password_label,
+            self.password_edit,
+            self.connect_button,
+        )
+
+    def _discover_core_host(self):
+        request = urllib.request.Request(
+            self.ROUTER_DISCOVERY_URL,
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=3.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, dict) or payload.get("status") != 1:
+            raise RuntimeError("Invalid response from the tCar router")
+        devices = payload.get("devices")
+        if not isinstance(devices, list):
+            raise RuntimeError("Router response has no device list")
+        core = next(
+            (
+                device for device in devices
+                if isinstance(device, dict)
+                and device.get("name") == "Core host"
+                and device.get("status") is True
+            ),
+            None,
+        )
+        if core is None:
+            raise RuntimeError("Core host is offline or not registered")
+        address = str(ipaddress.ip_address(str(core.get("ip", ""))))
+        if ipaddress.ip_address(address).version != 4:
+            raise RuntimeError("Core host did not provide an IPv4 address")
+        return address
+
+    def _authenticate(self, ip):
+        credentials = json.dumps({
+            "username": self.username_edit.text().strip(),
+            "password": self.password_edit.text(),
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            f"http://{ip}:{self.AUTH_PORT}/api/login",
+            data=credentials,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=3.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                raise RuntimeError("Invalid username or password") from exc
+            raise
+        if not isinstance(payload, dict) or payload.get("status") != 1:
+            raise RuntimeError("Authentication failed")
 
 
 class TabBar(QTabBar):
