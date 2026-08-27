@@ -139,6 +139,10 @@ class ChassisController:
                 pass
 
 class ServoController:
+    HORIZONTAL_SERVO_ID = 2
+    PWM_SPAN_US = 2000.0
+    ANGLE_SPAN_DEG = 180.0
+
     def __init__(self, use_direct=True):
         """初始化舵机控制器"""
         self.use_direct = use_direct  # 强制使用直接控制
@@ -233,6 +237,14 @@ class ServoController:
         print("舵机已重置")
         return True
 
+    def horizontal_angle_degrees(self):
+        """Return camera pan relative to its calibration pulse, right-positive."""
+        servo_id = self.HORIZONTAL_SERVO_ID
+        center = float(self.calibration[servo_id])
+        pulse = float(self.current_pos[servo_id])
+        degrees_per_us = self.ANGLE_SPAN_DEG / self.PWM_SPAN_US
+        return (center - pulse) * degrees_per_us
+
 class PS2Controller:
     def __init__(self):
         """初始化PS2控制器"""
@@ -284,6 +296,8 @@ class PS2Controller:
         self.route_combo_active = False
         self.route_combo_since = None
         self.route_combo_cooldown_until = 0.0
+        self.last_camera_pan_angle = None
+        self.last_camera_pan_publish = 0.0
         
         # 导入math模块用于角度计算
         import math
@@ -355,6 +369,23 @@ class PS2Controller:
             sock.sendto(command, SENSOR_SERVER_ADDRESS)
             reply, _ = sock.recvfrom(256)
             return reply.decode("utf-8", errors="replace")
+        finally:
+            sock.close()
+
+    def _publish_camera_pan(self, force=False):
+        angle = self.servo_ctrl.horizontal_angle_degrees()
+        now = time.monotonic()
+        if not force:
+            if now - self.last_camera_pan_publish < 0.05:
+                return
+            if (self.last_camera_pan_angle is not None
+                    and abs(angle - self.last_camera_pan_angle) < 0.05):
+                return
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.sendto(f"camera_pan:{angle:.3f}".encode(), SENSOR_SERVER_ADDRESS)
+            self.last_camera_pan_angle = angle
+            self.last_camera_pan_publish = now
         finally:
             sock.close()
 
@@ -432,6 +463,7 @@ class PS2Controller:
             if abs(self.current_speed[servo_id]) > 0.5:
                 step = int(self.current_speed[servo_id])
                 self.servo_ctrl.control_servo(servo_id, step)
+        self._publish_camera_pan()
     
     def process_left_joystick(self, x, y):
         """处理左摇杆输入 - 控制小车"""
@@ -690,6 +722,7 @@ class PS2Controller:
         
         # 测试舵机初始状态
         self.servo_ctrl.reset_servos()
+        self._publish_camera_pan(force=True)
         
         last_update_time = time.time()
         frame_count = 0

@@ -1236,6 +1236,7 @@ class SensorServer:
     CALIBRATION_STATUS_COMMAND = b'calibration_status'
     PERFORMANCE_STATUS_COMMAND = b'performance_status'
     DESKTOP_SERVICES_TOGGLE_COMMAND = b'desktop_services_toggle'
+    CAMERA_PAN_PREFIX = b'camera_pan:'
 
     def __init__(self, ip='192.168.66.3', port=8888, sonar=None, battery_reader=None,
                  desktop_services_callback=None):
@@ -1266,6 +1267,7 @@ class SensorServer:
         self.desktop_services_paused = False
         self.desktop_client_ips = set()
         self.paused_client_ips = set()
+        self.camera_pan_angle = 0.0
 
         try:
             self.mpu = MPU6050()
@@ -1435,6 +1437,15 @@ class SensorServer:
                     )
                     continue
 
+                if data.startswith(self.CAMERA_PAN_PREFIX) and is_local:
+                    try:
+                        angle = float(data[len(self.CAMERA_PAN_PREFIX):])
+                        if math.isfinite(angle):
+                            self.camera_pan_angle = max(-90.0, min(90.0, angle))
+                    except ValueError:
+                        pass
+                    continue
+
                 if addr[0] in self.paused_client_ips:
                     continue
 
@@ -1490,14 +1501,15 @@ class SensorServer:
                         self.sensor_lock.release()
                     
                     gyro_heading = self.mpu.heading_from_attitude_yaw(yaw)
-                    packet = struct.pack('!16f',
+                    packet = struct.pack('!17f',
                         pitch, roll, yaw,
                         qw, qx, qy, qz,
                         ax, ay, az,
                         gx, gy, gz,
                         float(distance),
                         float(mag_yaw),
-                        float(gyro_heading)
+                        float(gyro_heading),
+                        float(self.camera_pan_angle)
                     )
                     self.last_packet = packet
                     self.sock.sendto(packet, addr)
