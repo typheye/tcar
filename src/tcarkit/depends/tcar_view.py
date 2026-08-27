@@ -754,7 +754,10 @@ class ThirdPersonView(QGLWidget):
         grid_extent = self.GRID_RANGE_MM * self.vehicle_units_per_mm
         if abs(plane_z) > grid_extent:
             return
-        half_width, bottom, top = self.vehicle_obstacle_bounds
+        half_width, bottom, full_top = self.vehicle_obstacle_bounds
+        # The ultrasonic sensor is mounted below the camera. Represent only
+        # the lower half of the vehicle-height detection area.
+        top = (bottom + full_top) * 0.5
 
         glDepthMask(GL_FALSE)
         glColor4f(0.08, 0.92, 0.94, 0.24)
@@ -814,8 +817,8 @@ class ThirdPersonView(QGLWidget):
         height = 0.31
         left = -half_width + 0.06
         right = left + width
-        text_top = top - 0.04
-        bottom = text_top - height
+        bottom = top + 0.05
+        text_top = bottom + height
         # Move the decal slightly toward the vehicle to avoid coplanar
         # z-fighting while keeping it visually attached to the sensor plane.
         text_z = plane_z + 0.003
