@@ -36,9 +36,20 @@ class Camera:
     def camera_open(self, correction=False):
         try:
             self.cap = cv2.VideoCapture(-1)
+            # This camera exposes only YUYV 640x480.  Request its real native
+            # mode instead of a synthetic resolution that can drop the USB
+            # device from the bus.
             self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('Y', 'U', 'Y', 'V'))
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
-            self.cap.set(cv2.CAP_PROP_SATURATION, 40)
+            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, 0)
+            self.cap.set(cv2.CAP_PROP_CONTRAST, 27)
+            self.cap.set(cv2.CAP_PROP_SATURATION, 25)
+            self.cap.set(cv2.CAP_PROP_HUE, 0)
+            self.cap.set(cv2.CAP_PROP_GAMMA, 67)
+            self.cap.set(cv2.CAP_PROP_AUTO_WB, 1)
+            self.cap.set(cv2.CAP_PROP_SHARPNESS, 4)
             self.correction = correction
             self.opened = True
         except Exception as e:
@@ -61,7 +72,13 @@ class Camera:
                 if self.opened and self.cap.isOpened():
                     ret, frame_tmp = self.cap.read()
                     if ret:
-                        frame_resize = cv2.resize(frame_tmp, (self.width, self.height), interpolation=cv2.INTER_NEAREST)
+                        if frame_tmp.shape[1] != self.width or frame_tmp.shape[0] != self.height:
+                            frame_resize = cv2.resize(
+                                frame_tmp, (self.width, self.height),
+                                interpolation=cv2.INTER_AREA,
+                            )
+                        else:
+                            frame_resize = frame_tmp
                         
                         if self.correction:
                             self.frame = cv2.remap(frame_resize, self.map1, self.map2, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)

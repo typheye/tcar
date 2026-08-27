@@ -127,7 +127,10 @@ def startTruckPi():
 
     # Share the one sonar object with tCar telemetry.  Creating a second
     # object caused concurrent stateful transactions against I2C address 0x77.
-    TCAR_SERVICE = tCar.TCarService(sonar=HWSONAR)
+    TCAR_SERVICE = tCar.TCarService(
+        sonar=HWSONAR,
+        battery_reader=lambda: voltage,
+    )
     TCAR_SERVICE.start()
 
     previous_time = 0.00

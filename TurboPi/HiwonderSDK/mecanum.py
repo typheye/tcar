@@ -19,6 +19,15 @@ class MecanumChassis:
         self.velocity = 0
         self.direction = 0
         self.angular_rate = 0
+        self.minimum_motor_speed = 18
+
+    def _motor_command(self, value):
+        value = int(value)
+        if value == 0:
+            return 0
+        if abs(value) < self.minimum_motor_speed:
+            return self.minimum_motor_speed if value > 0 else -self.minimum_motor_speed
+        return max(-100, min(100, value))
 
     def reset_motors(self):
         for i in range(1, 5):
@@ -44,10 +53,10 @@ class MecanumChassis:
         vx = velocity * math.cos(direction * rad_per_deg)
         vy = velocity * math.sin(direction * rad_per_deg)
         vp = -angular_rate * (self.a + self.b)
-        v1 = int(vy + vx - vp) 
-        v2 = int(vy - vx + vp)
-        v3 = int(vy - vx - vp)
-        v4 = int(vy + vx + vp)
+        v1 = self._motor_command(vy + vx - vp)
+        v2 = self._motor_command(vy - vx + vp)
+        v3 = self._motor_command(vy - vx - vp)
+        v4 = self._motor_command(vy + vx + vp)
         if fake:
             return
         Board.setMotor(1, v1)
@@ -77,4 +86,3 @@ class MecanumChassis:
             return velocity, direction
         else:
             return self.set_velocity(velocity, direction, 0)
-

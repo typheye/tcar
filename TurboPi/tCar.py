@@ -1216,7 +1216,7 @@ class SensorServer:
     CALIBRATE_ALL_COMMAND = b'calibrate_all'
     CALIBRATION_STATUS_COMMAND = b'calibration_status'
 
-    def __init__(self, ip='192.168.66.3', port=8888, sonar=None):
+    def __init__(self, ip='192.168.66.3', port=8888, sonar=None, battery_reader=None):
         self.ip = ip
         self.port = port
         self.running = True
@@ -1236,6 +1236,7 @@ class SensorServer:
         self.calibration_lock = threading.Lock()
         self.calibration_status = "idle"
         self.last_packet = None
+        self.battery_reader = battery_reader
         self.last_distance = 5000.0
         self.sonar_thread = None
 
@@ -1331,6 +1332,18 @@ class SensorServer:
                     self.sock.sendto(self.calibration_status.encode(), addr)
                     continue
 
+                if data == b'battery_status':
+                    voltage = 0.0
+                    if self.battery_reader is not None:
+                        try:
+                            voltage = float(self.battery_reader())
+                        except Exception:
+                            pass
+                    # 2S Li-ion usable range. USB/invalid readings remain 0%.
+                    percent = max(0.0, min(100.0, (voltage - 6.4) / 2.0 * 100.0)) if voltage > 6.0 else 0.0
+                    self.sock.sendto(f"{voltage:.2f},{percent:.1f}".encode(), addr)
+                    continue
+
                 if data == b'get_data':
                     if not self.sensor_lock.acquire(False):
                         # Keep desktop clients alive during calibration.  The
@@ -1390,17 +1403,22 @@ class SensorServer:
 class TCarService:
     """Lifecycle wrapper used by TurboPi.py."""
 
-    def __init__(self, ip='192.168.66.3', port=8888, sonar=None):
+    def __init__(self, ip='192.168.66.3', port=8888, sonar=None, battery_reader=None):
         self.ip = ip
         self.port = port
         self.sonar = sonar
+        self.battery_reader = battery_reader
         self.server = None
         self.thread = None
 
     def start(self):
         if self.thread and self.thread.is_alive():
             return
-        self.server = SensorServer(self.ip, self.port, sonar=self.sonar)
+        self.server = SensorServer(
+            self.ip, self.port,
+            sonar=self.sonar,
+            battery_reader=self.battery_reader,
+        )
         self.thread = threading.Thread(target=self.server.run, name='tcar-sensor', daemon=True)
         self.thread.start()
 

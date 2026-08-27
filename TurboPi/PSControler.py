@@ -51,7 +51,8 @@ class ChassisController:
         
         # 左摇杆控制
         self.last_Lxy = [0, 0]    # 左摇杆值
-        self.deadzone = 0.15      # 死区
+        self.deadzone = 0.02      # only suppress electrical center noise
+        self.min_speed = 26.0     # overcome mecanum static friction
         
     def map_joystick_to_velocity(self, value):
         """映射摇杆值到速度（带死区和曲线）"""
@@ -66,7 +67,7 @@ class ChassisController:
         normalized = normalized ** 1.5
         
         # 映射到速度 0-60
-        speed = normalized * self.max_speed
+        speed = self.min_speed + normalized * (self.max_speed - self.min_speed)
         return speed
     
     def map_joystick_to_yaw(self, value):
@@ -96,27 +97,15 @@ class ChassisController:
             return
         
         yaw_rate = 0
-        linear_speed = 0
-
-        if abs(left_y) > abs(left_x):
-        
-            # 计算线速度（基于左摇杆上下）
-            if abs(left_y) > self.deadzone:
-                linear_speed = self.map_joystick_to_velocity(abs(left_y))
-                direction = 90 if left_y < 0 else 270  # 前进=90度，后退=270度
-            else:
-                direction = 0
-                linear_speed = 0
-        
+        magnitude = min(1.0, math.hypot(left_x, left_y))
+        if magnitude <= self.deadzone:
+            linear_speed = 0
+            direction = 0
         else:
-
-            # 计算线速度（基于左摇杆左右）
-            if abs(left_x) > self.deadzone:
-                linear_speed = self.map_joystick_to_velocity(abs(left_x))
-                direction = 180 if left_x < 0 else 0  # 左移=180度，右移=0度
-            else:
-                direction = 0
-                linear_speed = 0
+            linear_speed = self.map_joystick_to_velocity(magnitude)
+            # Preserve the full two-axis vector.  The old dominant-axis branch
+            # snapped diagonal input to four directions and produced drifting.
+            direction = math.degrees(math.atan2(-left_y, left_x)) % 360.0
         
         # 设置小车速度
         try:
@@ -261,7 +250,8 @@ class PS2Controller:
         
         # 右摇杆相关（舵机控制）
         self.last_Rxy = [0, 0]
-        self.deadzone = 0.15  # 死区
+        self.deadzone = 0.02  # only suppress electrical center noise
+        self.min_servo_speed = 4.0
         
         # 左摇杆相关（小车控制）
         self.last_Lxy = [0, 0]
@@ -326,7 +316,7 @@ class PS2Controller:
         normalized = normalized ** 1.5
         
         # 映射到速度 0-50
-        speed = normalized * 50
+        speed = self.min_servo_speed + normalized * (50 - self.min_servo_speed)
         return speed
     
     def get_safe_button(self, button_id):
