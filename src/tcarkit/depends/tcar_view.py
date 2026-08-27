@@ -9,6 +9,7 @@ import math
 import time
 import urllib.request
 import urllib.error
+import threading
 from collections import deque
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
@@ -24,6 +25,7 @@ class UDPReceiver(QThread):
     connection_status = pyqtSignal(bool)
     calibration_status = pyqtSignal(str)
     battery_status = pyqtSignal(float, float)
+    network_delay = pyqtSignal(float)
     
     def __init__(self, ip='192.168.66.3', port=8888):
         super().__init__()
@@ -43,9 +45,11 @@ class UDPReceiver(QThread):
             
             while self.running:
                 try:
+                    request_started = time.monotonic()
                     self.sock.sendto(b'get_data', (self.ip, self.port))
                     try:
                         data, addr = self.sock.recvfrom(1024)
+                        self.network_delay.emit((time.monotonic() - request_started) * 1000.0)
                         if len(data) == 60:
                             values = list(struct.unpack('!15f', data))
                             self.data_received.emit(values)
@@ -109,12 +113,18 @@ class CameraReceiver(QThread):
     frame_received = pyqtSignal(QImage)
     connection_status = pyqtSignal(bool)
 
-    def __init__(self, url="http://192.168.66.3:8080/?action=stream", max_fps=15):
+    def __init__(self, url="http://192.168.66.3:8080/?action=stream", max_fps=15,
+                 latest_only=False):
         super().__init__()
         self.url = url
         self.max_fps = max_fps
         self.running = True
         self.connected = False
+        self.latest_only = latest_only
+        self._frame_lock = threading.Lock()
+        self._latest_frame = None
+        self._latest_sequence = 0
+        self._latest_delay_ms = 0.0
 
     def _set_connected(self, connected):
         if self.connected != connected:
@@ -137,6 +147,8 @@ class CameraReceiver(QThread):
                 with urllib.request.urlopen(request, timeout=1.5) as response:
                     buffer = bytearray()
                     last_emit = 0.0
+                    frame_started = time.monotonic()
+                    pending_frame_timestamp = None
                     while self.running:
                         chunk = response.read(8192)
                         if not chunk:
@@ -150,7 +162,20 @@ class CameraReceiver(QThread):
                                     del buffer[:-2]
                                 break
                             if start:
+                                header = bytes(buffer[:start])
+                                marker = b'X-Frame-Time: '
+                                timestamp_start = header.rfind(marker)
+                                if timestamp_start >= 0:
+                                    timestamp_start += len(marker)
+                                    timestamp_end = header.find(b'\r\n', timestamp_start)
+                                    try:
+                                        pending_frame_timestamp = float(
+                                            header[timestamp_start:timestamp_end]
+                                        )
+                                    except (TypeError, ValueError):
+                                        pending_frame_timestamp = None
                                 del buffer[:start]
+                                frame_started = time.monotonic()
                             end = buffer.find(b'\xff\xd9', 2)
                             if end < 0:
                                 break
@@ -163,8 +188,24 @@ class CameraReceiver(QThread):
                             image = QImage.fromData(jpg, "JPG")
                             if not image.isNull():
                                 self._set_connected(True)
-                                self.frame_received.emit(image)
+                                if self.latest_only:
+                                    with self._frame_lock:
+                                        self._latest_frame = image
+                                        self._latest_sequence += 1
+                                        if pending_frame_timestamp is not None:
+                                            self._latest_delay_ms = max(
+                                                0.0,
+                                                (time.time() - pending_frame_timestamp) * 1000.0,
+                                            )
+                                        else:
+                                            self._latest_delay_ms = (
+                                                time.monotonic() - frame_started
+                                            ) * 1000.0
+                                else:
+                                    self.frame_received.emit(image)
                                 last_emit = now
+                            frame_started = time.monotonic()
+                            pending_frame_timestamp = None
                         if len(buffer) > 512 * 1024:
                             buffer.clear()
             except (OSError, ValueError, urllib.error.URLError):
@@ -172,6 +213,12 @@ class CameraReceiver(QThread):
                 self.msleep(250)
 
         self._set_connected(False)
+
+    def take_latest_frame(self, after_sequence=0):
+        with self._frame_lock:
+            if self._latest_sequence <= after_sequence or self._latest_frame is None:
+                return None
+            return self._latest_sequence, self._latest_frame, self._latest_delay_ms
 
     def stop(self):
         self.running = False

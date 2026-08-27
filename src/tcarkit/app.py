@@ -9,7 +9,7 @@ import sys
 from PyQt5.QtCore import QEvent, QObject, QSettings, Qt, QTimer
 from PyQt5.QtGui import QColor, QIcon, QPainter, QPalette, QPen, QPixmap
 from PyQt5.QtWidgets import (
-    QAction, QActionGroup, QApplication, QDialog, QLabel, QLineEdit,
+    QAction, QActionGroup, QApplication, QDialog, QLabel, QLineEdit, QMenu,
     QMainWindow, QMessageBox, QProgressBar, QProxyStyle, QPushButton,
     QStyle, QTabBar, QTabWidget, QVBoxLayout, QWidget,
 )
@@ -253,10 +253,12 @@ class TCarKitWindow(QMainWindow):
         self.tabs.setStyleSheet(TAB_STYLE)
         self._install_tab_style()
         self.tabs.tabCloseRequested.connect(self._close_tab)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(self.tabs)
         home_index = self.tabs.addTab(self.home, "Home")
         self.tabs.tabBar().setTabButton(home_index, QTabBar.RightSide, None)
         self._restore_session()
+        self._on_tab_changed(self.tabs.currentIndex())
         self.home.set_theme(_current_dark)
         self.vision.set_theme(_current_dark)
         self.performance.set_theme(_current_dark)
@@ -324,6 +326,47 @@ class TCarKitWindow(QMainWindow):
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        self._edit_menu = self.menuBar().addMenu("Edit(&E)")
+        self._debug_menu = QMenu("Debug Information", self)
+        self._show_debug = QAction("Show", self, checkable=True)
+        show_debug = self._read_bool_setting("vision/debug/show", False)
+        self._show_debug.setChecked(show_debug)
+        self._show_debug.toggled.connect(
+            lambda enabled: self._set_debug_option("show", enabled)
+        )
+        self._debug_menu.addAction(self._show_debug)
+        self._debug_menu.addSeparator()
+        self._fps_debug = QAction("FPS", self, checkable=True)
+        show_fps = self._read_bool_setting("vision/debug/fps", True)
+        self._fps_debug.setChecked(show_fps)
+        self._fps_debug.toggled.connect(
+            lambda enabled: self._set_debug_option("fps", enabled)
+        )
+        self._debug_menu.addAction(self._fps_debug)
+        self._frame_delay_debug = QAction("Frame Delay", self, checkable=True)
+        show_frame_delay = self._read_bool_setting(
+            "vision/debug/frame_delay", True
+        )
+        self._frame_delay_debug.setChecked(show_frame_delay)
+        self._frame_delay_debug.toggled.connect(
+            lambda enabled: self._set_debug_option("frame_delay", enabled)
+        )
+        self._debug_menu.addAction(self._frame_delay_debug)
+        self._network_delay_debug = QAction("Network Delay", self, checkable=True)
+        show_network_delay = self._read_bool_setting(
+            "vision/debug/network_delay", False
+        )
+        self._network_delay_debug.setChecked(show_network_delay)
+        self._network_delay_debug.toggled.connect(
+            lambda enabled: self._set_debug_option("network_delay", enabled)
+        )
+        self._debug_menu.addAction(self._network_delay_debug)
+        self.vision.set_debug_visible(show_debug)
+        self.vision.set_debug_metric("fps", show_fps)
+        self.vision.set_debug_metric("frame_delay", show_frame_delay)
+        self.vision.set_debug_metric("network_delay", show_network_delay)
+
         help_menu = self.menuBar().addMenu("Help(&H)")
         about_action = QAction("About(&A)", self)
         about_action.triggered.connect(
@@ -334,6 +377,33 @@ class TCarKitWindow(QMainWindow):
             )
         )
         help_menu.addAction(about_action)
+
+    def _read_bool_setting(self, key, default):
+        value = self._settings.value(key, None)
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int) and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in ("true", "1"):
+                return True
+            if normalized in ("false", "0"):
+                return False
+        # Ignore and remove malformed values instead of carrying legacy or
+        # corrupt configuration into a fresh application session.
+        self._settings.remove(key)
+        return default
+
+    def _set_debug_option(self, option, enabled):
+        enabled = bool(enabled)
+        self._settings.setValue(f"vision/debug/{option}", enabled)
+        if option == "show":
+            self.vision.set_debug_visible(enabled)
+        else:
+            self.vision.set_debug_metric(option, enabled)
 
     def _on_theme(self, action):
         self._theme_mode = action.data()
@@ -355,6 +425,14 @@ class TCarKitWindow(QMainWindow):
     def _close_tab(self, index):
         if self.tabs.tabText(index) != "Home":
             self.tabs.removeTab(index)
+
+    def _on_tab_changed(self, index):
+        self._edit_menu.clear()
+        if index >= 0 and self.tabs.tabText(index) == "Vision":
+            self._edit_menu.addMenu(self._debug_menu)
+            self._edit_menu.menuAction().setVisible(True)
+        else:
+            self._edit_menu.menuAction().setVisible(False)
 
     def _restore_session(self):
         names = self._settings.value("session/tabs", [])
