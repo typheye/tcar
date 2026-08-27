@@ -15,16 +15,23 @@ from tcarkit.depends.tcar_view import CameraReceiver, UDPReceiver
 
 
 class VisionPage(QWidget):
+    MAG_SYNC_WINDOW_S = 3.0
+    MAG_RESYNC_INTERVAL_S = 15.0
+    MAG_SYNC_VALID_S = 30.0
+
     def __init__(self, ip, parent=None):
         super().__init__(parent)
         self.setMinimumSize(640, 360)
         self.frame = QImage()
         self.connected = False
-        self.heading = 0.0
-        self.heading_target = 0.0
-        self.heading_ready = False
-        self.heading_anchor = None
-        self.heading_anchor_samples = deque(maxlen=24)
+        self.gyro_heading = 0.0
+        self.gyro_target = 0.0
+        self.gyro_ready = False
+        self.heading_offset = None
+        self.mag_sync_samples = deque(maxlen=256)
+        self.mag_sync_started = None
+        self.mag_last_sample_time = None
+        self.mag_last_sync_time = None
         self.last_inertial_yaw = None
         self.calibration_active = False
         self.battery_voltage = 0.0
@@ -41,7 +48,7 @@ class VisionPage(QWidget):
         self.debug_frame_delay = True
         self.debug_network_delay = False
 
-        # Camera frames may arrive at 20 FPS, but noisy telemetry is sampled
+        # Camera frames may arrive at 30 FPS, but noisy telemetry is sampled
         # into the HUD at a stable cadence so labels and indicators do not
         # visibly twitch on every packet.
         self.hud_timer = QTimer(self)
@@ -58,7 +65,7 @@ class VisionPage(QWidget):
 
         self.camera = CameraReceiver(
             url=f"http://{ip}:8080/?action=stream",
-            max_fps=20,
+            max_fps=30,
             latest_only=True,
         )
         self.camera.connection_status.connect(self._set_connected)
@@ -93,7 +100,11 @@ class VisionPage(QWidget):
     def _update_telemetry(self, data):
         if len(data) < 3:
             return
-        yaw = data[2]
+        # 4B publishes clockwise compass heading separately from the
+        # counter-clockwise attitude yaw used by Home's quaternion scene.
+        if len(data) < 16:
+            return
+        yaw = data[15]
         mag = data[14] if len(data) >= 15 else float("nan")
         if not math.isfinite(yaw):
             return
@@ -104,31 +115,57 @@ class VisionPage(QWidget):
             # A real 35-degree jump cannot occur between normal telemetry
             # packets. It indicates that attitude calibration reset yaw.
             if abs(yaw_step) > 35.0:
-                self._reset_heading_anchor()
+                self._reset_heading_states()
         self.last_inertial_yaw = yaw
 
-        # The installed magnetometer is too noisy to drive animation. Use a
-        # short circular average only to establish absolute NSEW, then let the
-        # calibrated inertial yaw carry all subsequent turns.
-        if self.heading_anchor is None and math.isfinite(mag):
-            # tCar.py already reflects the magnetic X axis, which swaps N/S
-            # while preserving E/W. Applying 180-heading again here would
-            # cancel that correction.
-            self.heading_anchor_samples.append((mag - yaw) % 360.0)
-            if len(self.heading_anchor_samples) >= 12:
-                anchor, confidence = self._circular_mean(self.heading_anchor_samples)
-                if confidence >= 0.72:
-                    self.heading_anchor = anchor
-
-        if self.heading_anchor is None:
-            return
-        candidate = (yaw + self.heading_anchor) % 360.0
-        if not self.heading_ready:
-            self.heading = candidate
-            self.heading_target = candidate
-            self.heading_ready = True
+        if not self.gyro_ready:
+            self.gyro_heading = yaw
+            self.gyro_target = yaw
+            self.gyro_ready = True
         else:
-            self.heading_target = candidate
+            self.gyro_target = yaw
+
+        # The magnetometer periodically establishes absolute heading, but it
+        # never directly animates the HUD. Between syncs, smooth inertial yaw
+        # carries every turn without inheriting magnetic jitter.
+        if math.isfinite(mag):
+            mag %= 360.0
+            self._sample_magnetic_sync(yaw, mag, time.monotonic())
+
+    def _sample_magnetic_sync(self, gyro_yaw, magnetic_heading, now):
+        needs_sync = (
+            self.heading_offset is None
+            or self.mag_last_sync_time is None
+            or now - self.mag_last_sync_time >= self.MAG_RESYNC_INTERVAL_S
+        )
+        if not needs_sync:
+            return
+        if (self.mag_last_sample_time is None
+                or now - self.mag_last_sample_time > 0.5):
+            self.mag_sync_samples.clear()
+            self.mag_sync_started = now
+        self.mag_last_sample_time = now
+        if self.mag_sync_started is None:
+            self.mag_sync_started = now
+        self.mag_sync_samples.append((magnetic_heading - gyro_yaw) % 360.0)
+        if (now - self.mag_sync_started < self.MAG_SYNC_WINDOW_S
+                or len(self.mag_sync_samples) < 30):
+            return
+
+        candidate, confidence = self._circular_mean(self.mag_sync_samples)
+        accepted = confidence >= 0.96
+        if accepted and self.heading_offset is not None:
+            error = (candidate - self.heading_offset + 180.0) % 360.0 - 180.0
+            accepted = abs(error) <= 25.0
+        if accepted:
+            if self.heading_offset is None:
+                self.heading_offset = candidate
+            else:
+                error = (candidate - self.heading_offset + 180.0) % 360.0 - 180.0
+                self.heading_offset = (self.heading_offset + error * 0.25) % 360.0
+            self.mag_last_sync_time = now
+        self.mag_sync_samples.clear()
+        self.mag_sync_started = None
 
     @staticmethod
     def _circular_mean(values):
@@ -138,18 +175,31 @@ class VisionPage(QWidget):
         confidence = math.hypot(sx, sy) / count
         return math.degrees(math.atan2(sy, sx)) % 360.0, confidence
 
-    def _reset_heading_anchor(self):
-        self.heading_anchor = None
-        self.heading_anchor_samples.clear()
-        self.heading_ready = False
+    def _reset_heading_states(self):
+        self.gyro_ready = False
+        self.heading_offset = None
+        self.mag_sync_samples.clear()
+        self.mag_sync_started = None
+        self.mag_last_sample_time = None
+        self.mag_last_sync_time = None
+
+    def _display_heading(self):
+        offset = self.heading_offset if self.heading_offset is not None else 0.0
+        return (self.gyro_heading + offset) % 360.0
+
+    def _mag_sync_is_valid(self, now=None):
+        if self.mag_last_sync_time is None:
+            return False
+        now = time.monotonic() if now is None else now
+        return now - self.mag_last_sync_time <= self.MAG_SYNC_VALID_S
 
     def _update_calibration_status(self, status):
         active = status not in ("idle", "complete") and not status.startswith("failed:")
         if active and not self.calibration_active:
-            self._reset_heading_anchor()
+            self._reset_heading_states()
             self.last_inertial_yaw = None
         elif status == "complete" and self.calibration_active:
-            self._reset_heading_anchor()
+            self._reset_heading_states()
             self.last_inertial_yaw = None
         self.calibration_active = active
 
@@ -182,14 +232,11 @@ class VisionPage(QWidget):
 
     def _advance_hud(self):
         changed = False
-        if self.heading_ready:
-            # Circular low-pass filtering follows the shortest route through
-            # 0/360 degrees and still remains responsive during real turns.
-            delta = (self.heading_target - self.heading + 180.0) % 360.0 - 180.0
+        if self.gyro_ready:
+            delta = (self.gyro_target - self.gyro_heading + 180.0) % 360.0 - 180.0
             if abs(delta) > 0.08:
-                self.heading = (self.heading + delta * 0.24) % 360.0
+                self.gyro_heading = (self.gyro_heading + delta * 0.35) % 360.0
                 changed = True
-
         self.hud_ticks += 1
         if self.hud_ticks >= 10:
             self.hud_ticks = 0
@@ -221,7 +268,7 @@ class VisionPage(QWidget):
         painter.end()
 
     def _draw_camera(self, painter):
-        painter.fillRect(self.rect(), QColor(22, 24, 27))
+        painter.fillRect(self.rect(), Qt.black)
         if self.frame.isNull():
             painter.setPen(QColor(220, 220, 220))
             painter.setFont(QFont("Segoe UI", 16))
@@ -241,13 +288,12 @@ class VisionPage(QWidget):
         painter.drawImage(QRectF(self.rect()), self.frame, source)
 
     def _draw_compass(self, painter):
-        if not self.heading_ready:
-            return
+        heading = self._display_heading() if self.gyro_ready else 0.0
         center_x = self.width() / 2
         top = 0
         span = min(760, self.width() * 0.68)
         for offset in range(-90, 91, 15):
-            angle = (self.heading + offset) % 360.0
+            angle = (heading + offset) % 360.0
             x = center_x + offset / 180.0 * span
             cardinal = self._cardinal(angle)
             label = cardinal if cardinal else f"{int(round(angle / 15) * 15) % 360}"
@@ -260,8 +306,9 @@ class VisionPage(QWidget):
             # gray strip obscuring the first-person view.
             painter.setPen(QPen(QColor(0, 0, 0, 115), 3))
             painter.drawLine(QPointF(x + 1, tick_start), QPointF(x + 1, tick_end))
-            painter.setFont(QFont("Segoe UI", 11 if selected else 10, QFont.DemiBold))
-            painter.drawText(text_rect.translated(1, 1), Qt.AlignHCenter | Qt.AlignTop, label)
+            if self.heading_offset is not None:
+                painter.setFont(QFont("Segoe UI", 11 if selected else 10, QFont.DemiBold))
+                painter.drawText(text_rect.translated(1, 1), Qt.AlignHCenter | Qt.AlignTop, label)
             # Only the value selected by the yellow marker is bright white;
             # peripheral bearings recede in soft gray to strengthen focus.
             painter.setPen(
@@ -270,7 +317,8 @@ class VisionPage(QWidget):
                 else QPen(QColor(205, 208, 210, 175), 1.0)
             )
             painter.drawLine(QPointF(x, tick_start), QPointF(x, tick_end))
-            painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop, label)
+            if self.heading_offset is not None:
+                painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop, label)
         # Downward equilateral marker sits above the scale and never covers a
         # heading label.
         marker = QPainterPath(QPointF(center_x - 7, top + 1))
@@ -319,9 +367,10 @@ class VisionPage(QWidget):
         painter.setPen(QPen(QColor(255, 255, 255, 225), 2))
         painter.setBrush(QColor(205, 205, 205, 230))
         painter.drawEllipse(center, radius, radius)
-        if not self.heading_ready:
+        if not self.gyro_ready:
             return
-        angle = math.radians(self.heading - 90.0)
+        heading = self._display_heading()
+        angle = math.radians(heading - 90.0)
         cone_length = size * 0.28
         half_fov = math.radians(24.0)
         left = QPointF(
@@ -345,8 +394,12 @@ class VisionPage(QWidget):
             QPointF(center.x() + math.cos(angle) * cone_length,
                     center.y() + math.sin(angle) * cone_length),
         )
-        gradient.setColorAt(0.0, QColor(255, 255, 255, 205))
-        gradient.setColorAt(1.0, QColor(255, 255, 255, 18))
+        if self._mag_sync_is_valid():
+            gradient.setColorAt(0.0, QColor(190, 255, 210, 215))
+            gradient.setColorAt(1.0, QColor(160, 245, 190, 16))
+        else:
+            gradient.setColorAt(0.0, QColor(255, 255, 255, 205))
+            gradient.setColorAt(1.0, QColor(255, 255, 255, 18))
         painter.setPen(Qt.NoPen)
         painter.setBrush(gradient)
         painter.drawPath(cone)
@@ -397,6 +450,17 @@ class VisionPage(QWidget):
 
     def set_theme(self, dark):
         self.update()
+
+    def set_active(self, active):
+        self.receiver.set_active(active)
+        self.camera.set_active(active)
+        if active:
+            self.hud_timer.start(100)
+            self.frame_timer.start(16)
+            self.update()
+        else:
+            self.hud_timer.stop()
+            self.frame_timer.stop()
 
     def stop(self):
         self.hud_timer.stop()

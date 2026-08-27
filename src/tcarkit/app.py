@@ -179,7 +179,7 @@ class IPDialog(QDialog):
         try:
             sock.sendto(b"get_data", (ip, 8888))
             packet, _ = sock.recvfrom(1024)
-            if len(packet) not in (40, 56, 60):
+            if len(packet) not in (40, 56, 60, 64):
                 raise RuntimeError(f"Unexpected telemetry packet: {len(packet)} bytes")
             super().accept()
         except Exception as exc:
@@ -243,6 +243,9 @@ class TCarKitWindow(QMainWindow):
         self.home = HomePage(ip)
         self.vision = VisionPage(ip)
         self.performance = PerformancePage(ip)
+        self.home.set_active(False)
+        self.vision.set_active(False)
+        self.performance.set_active(False)
         self._pages = {"Vision": self.vision, "Performance": self.performance}
         self._build_menus()
         self.tabs = QTabWidget()
@@ -428,7 +431,11 @@ class TCarKitWindow(QMainWindow):
 
     def _on_tab_changed(self, index):
         self._edit_menu.clear()
-        if index >= 0 and self.tabs.tabText(index) == "Vision":
+        active_name = self.tabs.tabText(index) if index >= 0 else ""
+        self.home.set_active(active_name == "Home")
+        self.vision.set_active(active_name == "Vision")
+        self.performance.set_active(active_name == "Performance")
+        if active_name == "Vision":
             self._edit_menu.addMenu(self._debug_menu)
             self._edit_menu.menuAction().setVisible(True)
         else:
@@ -461,6 +468,7 @@ class TCarKitWindow(QMainWindow):
         self._settings.setValue("session/tabs", names)
         self.home.stop()
         self.vision.stop()
+        self.performance.stop()
         event.accept()
 
 

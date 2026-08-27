@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Local performance page using the JanPNP performance-page layout."""
+"""Raspberry Pi performance page using the JanPNP layout."""
 
-import platform
+import json
 import socket
 import threading
 import time
 from collections import deque
 
-import psutil
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
@@ -74,17 +73,19 @@ class PerformancePage(QWidget):
         self.memory_values = deque(maxlen=self.history)
         self.latency_values = deque(maxlen=self.history)
         self.network_values = deque(maxlen=self.history)
-        counters = psutil.net_io_counters()
-        self.last_network_bytes = counters.bytes_sent + counters.bytes_recv
+        self.last_network_bytes = None
         self.last_network_time = time.monotonic()
-        self.latency_lock = threading.Lock()
+        self.performance_lock = threading.Lock()
+        self.last_snapshot = None
         self.last_latency = None
-        self.latency_thread = threading.Thread(
-            target=self._latency_loop,
-            name="tcarkit-latency",
+        self.running = True
+        self.active = True
+        self.performance_thread = threading.Thread(
+            target=self._performance_loop,
+            name="tcarkit-performance",
             daemon=True,
         )
-        self.latency_thread.start()
+        self.performance_thread.start()
         self._build_ui()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
@@ -119,32 +120,42 @@ class PerformancePage(QWidget):
         second_row.addWidget(self.network_graph)
         root.addLayout(second_row)
 
-        info = QLabel(
-            f"  {platform.node()} | {platform.platform()} | "
-            f"Python {platform.python_version()}"
-        )
-        info.setStyleSheet("font: 10px monospace;")
-        info.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        root.addWidget(info)
+        self.info = QLabel("  Raspberry Pi 4B | waiting for performance data")
+        self.info.setStyleSheet("font: 10px monospace;")
+        self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        root.addWidget(self.info)
 
     def refresh(self):
         elapsed = time.time() - self.started
-        cpu = psutil.cpu_percent()
-        memory = psutil.virtual_memory().percent
-        with self.latency_lock:
+        with self.performance_lock:
+            snapshot = dict(self.last_snapshot) if self.last_snapshot else None
             latency = self.last_latency
         now = time.monotonic()
-        counters = psutil.net_io_counters()
-        total_bytes = counters.bytes_sent + counters.bytes_recv
-        interval = max(0.001, now - self.last_network_time)
-        network = max(0.0, total_bytes - self.last_network_bytes) / interval / 1048576.0
-        self.last_network_bytes = total_bytes
-        self.last_network_time = now
+        cpu = float(snapshot.get("cpu", float("nan"))) if snapshot else float("nan")
+        memory = float(snapshot.get("memory", float("nan"))) if snapshot else float("nan")
+        total_bytes = int(snapshot.get("network_bytes", 0)) if snapshot else 0
+        if snapshot and self.last_network_bytes is not None:
+            interval = max(0.001, now - self.last_network_time)
+            network = max(0.0, total_bytes - self.last_network_bytes) / interval / 1048576.0
+        else:
+            network = float("nan")
+        if snapshot:
+            self.last_network_bytes = total_bytes
+            self.last_network_time = now
 
-        self.cpu.set_value(f"{cpu:.1f}", f"{psutil.cpu_count()} logical cores")
-        self.memory.set_value(f"{memory:.1f}")
+        self.cpu.set_value("--" if snapshot is None else f"{cpu:.1f}",
+                           "" if snapshot is None else f"{snapshot.get('cores', '--')} cores")
+        self.memory.set_value("--" if snapshot is None else f"{memory:.1f}")
         self.latency.set_value("--" if latency is None else f"{latency:.1f}")
-        self.network.set_value(f"{network:.2f}")
+        self.network.set_value(
+            "--" if snapshot is None or network != network else f"{network:.2f}"
+        )
+        if snapshot:
+            self.info.setText(
+                f"  {snapshot.get('hostname', 'Raspberry Pi 4B')} | "
+                f"{snapshot.get('platform', 'Linux')} | "
+                f"Python {snapshot.get('python', '--')}"
+            )
 
         self.timestamps.append(elapsed)
         self.cpu_values.append(cpu)
@@ -157,27 +168,46 @@ class PerformancePage(QWidget):
         self.latency_graph.set_data(timestamps, list(self.latency_values))
         self.network_graph.set_data(timestamps, list(self.network_values))
 
-    def _measure_latency(self):
+    def _poll_performance(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(0.35)
+        sock.settimeout(0.6)
         started = time.perf_counter()
         try:
-            sock.sendto(b"get_data", (self.ip, 8888))
-            packet, _ = sock.recvfrom(1024)
-            if len(packet) not in (40, 56, 60):
-                return None
-            return (time.perf_counter() - started) * 1000.0
-        except OSError:
-            return None
+            sock.sendto(b"performance_status", (self.ip, 8888))
+            packet, _ = sock.recvfrom(2048)
+            latency = (time.perf_counter() - started) * 1000.0
+            snapshot = json.loads(packet.decode("utf-8"))
+            if not isinstance(snapshot, dict) or "error" in snapshot:
+                return None, None
+            return snapshot, latency
+        except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            return None, None
         finally:
             sock.close()
 
-    def _latency_loop(self):
-        while True:
-            latency = self._measure_latency()
-            with self.latency_lock:
+    def _performance_loop(self):
+        while self.running:
+            if not self.active:
+                time.sleep(0.1)
+                continue
+            snapshot, latency = self._poll_performance()
+            with self.performance_lock:
+                self.last_snapshot = snapshot
                 self.last_latency = latency
             time.sleep(1.0)
+
+    def set_active(self, active):
+        self.active = bool(active)
+        if active:
+            self.timer.start(1000)
+            self.refresh()
+        else:
+            self.timer.stop()
+
+    def stop(self):
+        self.running = False
+        self.timer.stop()
+        self.performance_thread.join(timeout=1.0)
 
     def set_theme(self, dark):
         for graph in (

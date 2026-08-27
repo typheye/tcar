@@ -32,6 +32,7 @@ class UDPReceiver(QThread):
         self.ip = ip
         self.port = port
         self.running = True
+        self.active = True
         self.connected = False
         self.sock = None
         self.last_calibration_status = None
@@ -44,13 +45,23 @@ class UDPReceiver(QThread):
             print(f"Connecting server: {self.ip}:{self.port}")
             
             while self.running:
+                if not self.active:
+                    self.msleep(100)
+                    continue
                 try:
                     request_started = time.monotonic()
                     self.sock.sendto(b'get_data', (self.ip, self.port))
                     try:
                         data, addr = self.sock.recvfrom(1024)
                         self.network_delay.emit((time.monotonic() - request_started) * 1000.0)
-                        if len(data) == 60:
+                        if len(data) == 64:
+                            values = list(struct.unpack('!16f', data))
+                            self.data_received.emit(values)
+                            if not self.connected:
+                                self.connected = True
+                                self.connection_status.emit(True)
+                                print("Connected")
+                        elif len(data) == 60:
                             values = list(struct.unpack('!15f', data))
                             self.data_received.emit(values)
                             if not self.connected:
@@ -108,6 +119,9 @@ class UDPReceiver(QThread):
         if self.sock:
             self.sock.close()
 
+    def set_active(self, active):
+        self.active = bool(active)
+
 
 class CameraReceiver(QThread):
     frame_received = pyqtSignal(QImage)
@@ -119,6 +133,7 @@ class CameraReceiver(QThread):
         self.url = url
         self.max_fps = max_fps
         self.running = True
+        self.active = True
         self.connected = False
         self.latest_only = latest_only
         self._frame_lock = threading.Lock()
@@ -134,6 +149,10 @@ class CameraReceiver(QThread):
     def run(self):
         frame_interval = 1.0 / max(1, self.max_fps)
         while self.running:
+            if not self.active:
+                self._set_connected(False)
+                self.msleep(100)
+                continue
             try:
                 request = urllib.request.Request(
                     self.url,
@@ -149,13 +168,17 @@ class CameraReceiver(QThread):
                     last_emit = 0.0
                     frame_started = time.monotonic()
                     pending_frame_timestamp = None
-                    while self.running:
-                        chunk = response.read(8192)
+                    pending_server_sequence = None
+                    last_server_sequence = None
+                    clock_offset_s = None
+                    while self.running and self.active:
+                        read_chunk = getattr(response, "read1", response.read)
+                        chunk = read_chunk(32768)
                         if not chunk:
                             break
                         buffer.extend(chunk)
 
-                        while self.running:
+                        while self.running and self.active:
                             start = buffer.find(b'\xff\xd8')
                             if start < 0:
                                 if len(buffer) > 65536:
@@ -174,6 +197,17 @@ class CameraReceiver(QThread):
                                         )
                                     except (TypeError, ValueError):
                                         pending_frame_timestamp = None
+                                sequence_marker = b'X-Frame-Sequence: '
+                                sequence_start = header.rfind(sequence_marker)
+                                if sequence_start >= 0:
+                                    sequence_start += len(sequence_marker)
+                                    sequence_end = header.find(b'\r\n', sequence_start)
+                                    try:
+                                        pending_server_sequence = int(
+                                            header[sequence_start:sequence_end]
+                                        )
+                                    except (TypeError, ValueError):
+                                        pending_server_sequence = None
                                 del buffer[:start]
                                 frame_started = time.monotonic()
                             end = buffer.find(b'\xff\xd9', 2)
@@ -183,6 +217,9 @@ class CameraReceiver(QThread):
                             jpg = bytes(buffer[:end + 2])
                             del buffer[:end + 2]
                             now = time.monotonic()
+                            if (pending_server_sequence is not None and
+                                    pending_server_sequence == last_server_sequence):
+                                continue
                             if now - last_emit < frame_interval:
                                 continue
                             image = QImage.fromData(jpg, "JPG")
@@ -193,9 +230,13 @@ class CameraReceiver(QThread):
                                         self._latest_frame = image
                                         self._latest_sequence += 1
                                         if pending_frame_timestamp is not None:
+                                            observed_offset = time.time() - pending_frame_timestamp
+                                            if (clock_offset_s is None or
+                                                    observed_offset < clock_offset_s):
+                                                clock_offset_s = observed_offset
                                             self._latest_delay_ms = max(
                                                 0.0,
-                                                (time.time() - pending_frame_timestamp) * 1000.0,
+                                                (observed_offset - clock_offset_s) * 1000.0,
                                             )
                                         else:
                                             self._latest_delay_ms = (
@@ -204,8 +245,10 @@ class CameraReceiver(QThread):
                                 else:
                                     self.frame_received.emit(image)
                                 last_emit = now
+                                last_server_sequence = pending_server_sequence
                             frame_started = time.monotonic()
                             pending_frame_timestamp = None
+                            pending_server_sequence = None
                         if len(buffer) > 512 * 1024:
                             buffer.clear()
             except (OSError, ValueError, urllib.error.URLError):
@@ -222,6 +265,9 @@ class CameraReceiver(QThread):
 
     def stop(self):
         self.running = False
+
+    def set_active(self, active):
+        self.active = bool(active)
 
 
 # ============ OpenGL 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柣鎴ｅГ閸婂潡鏌ㄩ弴鐐测偓鍫曞焵椤掆偓閸熷磭绮诲☉妯锋婵☆垳鈷堝Σ顖涚節閻㈤潧浠﹂柛銊ㄦ硾椤繈濡歌娑撳秹鏌￠崒娑崇穿鐟滅増甯楅弲鏌ユ煕濞戝崬鏋︾痪顓涘亾濠碉紕鍋戦崐鎰板疾濠婂牊鍋傞柨鐔哄Т閽冪喓鎲搁幋鐘典笉婵炴垯鍨圭粻濠氭煛閸屾ê鍔氱憸鐗堝哺濮婄粯鎷呴搹鐟扮闂佸憡姊瑰ú鐔煎箖濡警娼╅悹楦挎閻涖儵姊虹化鏇炲⒉缂佸甯￠幃锟犲即閵忥紕鍘撻梺瀹犳〃缁€渚€寮搁妶鍡欑闁割偆鍠愮粈鍫㈢磼?============
@@ -302,9 +348,8 @@ class ThirdPersonView(QGLWidget):
         norm = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
         if norm <= 0.0:
             return
-        # Raspberry Pi sends the sensor-relative quaternion after sign correction.
-        # The viewer's semantic axes are: pitch -> GL X, yaw -> GL Y, roll -> GL Z.
-        self.target_cube_quat = [qw / norm, qy / norm, qz / norm, qx / norm]
+        # 4B publishes the quaternion in tCar's standard vehicle axes.
+        self.target_cube_quat = [qw / norm, qx / norm, qy / norm, qz / norm]
         self.has_quaternion = True
 
     def _slerp_quat(self, a, b, t):
@@ -430,7 +475,7 @@ class ThirdPersonView(QGLWidget):
         self.draw_cube()
         
         # 闂傚倸鍊搁崐鎼佸磹閻戣姤鍤勯柛顐ｆ穿缂嶆牠鎮楅敐搴℃灈缂佲偓鐎ｎ偁浜滈柟鎵虫櫅閻掔儤绻涢崗鍏碱棃婵﹦绮幏鍛存惞閻熸壆顐奸梻浣虹帛椤ㄥ繘宕㈤幆褜鍤楀┑鐘叉搐缁犳氨鎲稿鍫熷€块柤鎭掑劘娴滄粓鐓崶銊﹀鞍妞ゃ儲鍨块弻娑氣偓锝庡亝鐏忣參鏌嶉挊澶樻Ц闁宠绉归、妯款槺闂侇収鍨堕弻鐔碱敍濞嗘垹鐛㈤悗瑙勬礈閸忔﹢銆佸鈧幃鈺冨枈婢跺苯绨ラ梻鍌氬€风欢姘跺焵椤掑倸浠滈柤娲诲灡閺呭墎鈧數纭堕崑鎾舵喆閸曨剙顦╅梺绋款儏閿曘倝鎮鹃悜鑺ュ亜缁炬媽椴搁弲銏ゆ⒑缁嬫寧婀版慨妯稿妿缁?
-        self.draw_axes_indicator()
+        # The Home scene intentionally has no screen-space orientation widget.
         
         # 闂傚倸鍊搁崐鐑芥倿閿曞倹鍎戠憸鐗堝笒閺勩儵鏌涢弴銊ョ仩闁搞劌鍊块獮鏍庨鈧俊鑲┾偓鐟版啞缁诲啴濡甸崟顖氱妞ゆ牗顨呮禍楣冩煙?
         self.frame_count += 1
@@ -438,6 +483,31 @@ class ThirdPersonView(QGLWidget):
             self.current_fps = self.frame_count
             self.frame_count = 0
             self.last_fps_update = time.time()
+
+    @staticmethod
+    def _draw_cone(tip, base, radial_u, radial_v, radius, segments=16):
+        """Draw a closed solid cone between a base plane and its tip."""
+        ring = []
+        for index in range(segments):
+            angle = 2.0 * math.pi * index / segments
+            cos_a = math.cos(angle) * radius
+            sin_a = math.sin(angle) * radius
+            ring.append(tuple(
+                base[axis] + radial_u[axis] * cos_a + radial_v[axis] * sin_a
+                for axis in range(3)
+            ))
+        glBegin(GL_TRIANGLES)
+        for index, point in enumerate(ring):
+            next_point = ring[(index + 1) % segments]
+            glVertex3f(*tip)
+            glVertex3f(*point)
+            glVertex3f(*next_point)
+        glEnd()
+        glBegin(GL_TRIANGLE_FAN)
+        glVertex3f(*base)
+        for index in range(segments, -1, -1):
+            glVertex3f(*ring[index % segments])
+        glEnd()
 
     def draw_grid_with_axes(self):
         """Draw ground grid and world axes."""
@@ -461,7 +531,8 @@ class ThirdPersonView(QGLWidget):
         
         # ===== 闂傚倸鍊搁崐鎼佸磹閻戣姤鍤勯柛顐ｆ穿缂嶆牠鎮楅敐搴℃灈缂佲偓鐎ｎ偁浜滈柟鎵虫櫅閻掔儤绻涢崗鍏碱棃婵﹦绮幏鍛存惞閻熸壆顐奸梻浣虹帛椤ㄥ繘宕㈤幆褜鍤楀┑鐘叉搐缁犳氨鎲稿鍫熷€?(闂傚倸鍊搁崐鎼佸磹妞嬪孩顐芥慨姗嗗墻閻掍粙鏌ゆ慨鎰偓鏍偓姘煼閺岋綁寮崒姘粯缂備讲鍋撳鑸靛姈閸婂爼鏌ｉ幇顒傛憼闁诲浚鍣ｉ弻銈夊级閹稿骸浠撮梺鍝勭灱閸犳挾妲愰幒妤€顫呴柣妯虹－娴滆埖淇婇悙顏勨偓鎴﹀磿闁秵鍋嬪┑鐘叉搐妗呴梺鍛婃处閸ㄥジ寮崘鈹夸簻闁规壋鏅涢悘鈺冪磼閻樺樊鐓兼慨? =====
         axis_len = 3.0
-        arrow = 0.15
+        arrow = 0.28
+        arrow_radius = 0.09
         
         # X闂?(缂傚倸鍊搁崐鎼佸磹閹间礁纾圭€瑰嫰鍋婂〒濠氭煙閻戞﹩娈旂紒鈧€ｎ偅鍙忔俊鐐额嚙娴滈箖鎮楃憴鍕缂傚秴锕ら悾宄拔旈崨顔兼異闂佸啿鎼崯顐ｎ殽? - 闂傚倸鍊搁崐鎼佸磹妞嬪海鐭嗗〒姘ｅ亾妤犵偞鐗犻、鏇㈡晜閽樺缃曞┑鐘垫暩婵鈧凹鍘奸悾鐑藉蓟閵夛妇鍘遍柣蹇曞仜婢х晫绱撳顑?
         glColor4f(1.0, 0.1, 0.1, 0.9)
@@ -470,16 +541,10 @@ class ThirdPersonView(QGLWidget):
         glVertex3f(0, -0.48, 0)
         glVertex3f(axis_len, -0.48, 0)
         glEnd()
-        glBegin(GL_TRIANGLES)
-        glVertex3f(axis_len, -0.48, 0)
-        glVertex3f(axis_len - arrow, -0.48, -arrow/2)
-        glVertex3f(axis_len - arrow, -0.48, arrow/2)
-        glEnd()
-        glColor4f(1.0, 0.3, 0.3, 0.8)
-        glPointSize(6)
-        glBegin(GL_POINTS)
-        glVertex3f(axis_len + 0.2, -0.48, 0)
-        glEnd()
+        self._draw_cone(
+            (axis_len, -0.48, 0), (axis_len - arrow, -0.48, 0),
+            (0, 1, 0), (0, 0, 1), arrow_radius,
+        )
         
         # Y闂?(缂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸绾惧湱鈧懓瀚崳纾嬨亹閹烘垹鍊炲銈嗗坊閸嬫挾鐥幑鎰《缂佽鲸鎸婚幏鍛嫚閿涘嫬濮洪梻? - 闂傚倸鍊搁崐鎼佸磹妞嬪海鐭嗗〒姘ｅ亾妤犵偞鐗犻、鏇㈡晜閽樺缃曞┑鐘垫暩婵鈧凹鍘奸悾鐑藉蓟閵夛妇鍘遍柣蹇曞仜婢т粙鍩婇弴鐔虹?(Z闂傚倸鍊搁崐宄懊归崶褏鏆﹂柛顭戝亝閸欏繘鏌ｉ姀銏╃劸缂佲偓婢跺绻嗛柕鍫濇噺閸ｅ湱绱掗幇顓ф疁闁哄瞼鍠栭幃褔宕奸悢鍝勫殥闂備浇妫勯崯浼村窗閺嶎厼钃熼柨婵嗩槸缁秹鏌涚仦鎹愬濞寸姵锕㈤弻?
         glColor4f(0.1, 1.0, 0.1, 0.9)
@@ -488,16 +553,10 @@ class ThirdPersonView(QGLWidget):
         glVertex3f(0, -0.48, 0)
         glVertex3f(0, -0.48, -axis_len)
         glEnd()
-        glBegin(GL_TRIANGLES)
-        glVertex3f(0, -0.48, -axis_len)
-        glVertex3f(-arrow/2, -0.48, -axis_len + arrow)
-        glVertex3f(arrow/2, -0.48, -axis_len + arrow)
-        glEnd()
-        glColor4f(0.3, 1.0, 0.3, 0.8)
-        glPointSize(6)
-        glBegin(GL_POINTS)
-        glVertex3f(0, -0.48, -axis_len - 0.2)
-        glEnd()
+        self._draw_cone(
+            (0, -0.48, -axis_len), (0, -0.48, -axis_len + arrow),
+            (1, 0, 0), (0, 1, 0), arrow_radius,
+        )
         
         # ===== Z闂?(闂傚倸鍊搁崐鎼佸磹瀹勬噴褰掑炊椤剚鐩畷鐔碱敍濮樿鲸鐒炬俊鐐€栭悧妤冨垝瀹ュ懐鏆﹂柡灞诲劜閻撴洟鏌嶉埡浣告灓闁绘帊绮欓弻? - 闂傚倸鍊搁崐鎼佸磹妞嬪海鐭嗗〒姘ｅ亾妤犵偞鐗犻、鏇㈡晜閽樺缃曞┑鐘垫暩婵鈧凹鍘奸悾鐑藉蓟閵夛妇鍘撻悷婊勭矒瀹曟粌鈽夊顓ф綗?=====
         glColor4f(0.1, 0.1, 1.0, 0.9)
@@ -506,16 +565,10 @@ class ThirdPersonView(QGLWidget):
         glVertex3f(0, -0.48, 0)
         glVertex3f(0, axis_len - 0.48, 0)
         glEnd()
-        glBegin(GL_TRIANGLES)
-        glVertex3f(0, axis_len - 0.48, 0)
-        glVertex3f(-arrow/2, axis_len - 0.48 - arrow, 0)
-        glVertex3f(arrow/2, axis_len - 0.48 - arrow, 0)
-        glEnd()
-        glColor4f(0.3, 0.3, 1.0, 0.8)
-        glPointSize(6)
-        glBegin(GL_POINTS)
-        glVertex3f(0, axis_len - 0.48 + 0.2, 0)
-        glEnd()
+        self._draw_cone(
+            (0, axis_len - 0.48, 0), (0, axis_len - 0.48 - arrow, 0),
+            (1, 0, 0), (0, 0, 1), arrow_radius,
+        )
         
         # 濠电姷鏁告慨鐑藉极閹间礁纾婚柣鎰惈閸ㄥ倿鏌涢锝嗙缂佺姴缍婇弻宥夊传閸曨剙娅ｉ梺绋胯閸旀垿寮婚妶鍚ゅ湱鈧綆鍋呴悵鏍磽娴ｇ懓鏁剧紒鐘冲灱閻忓啴姊洪幐搴ｇ畵闁瑰啿閰ｅ鍐测枎閹惧鍘遍梺纭呭焽閸斿本绂嶆ィ鍐┾拻闁稿本鐟ч崝宥夋煙椤旇偐鍩ｇ€规洘娲熼幃婊兾熺喊杈ㄩ敜闂備礁澹婇崑鍛洪弽顓熷殝?
         glColor4f(1.0, 1.0, 1.0, 0.5)
@@ -587,13 +640,12 @@ class ThirdPersonView(QGLWidget):
         glLineWidth(3.0)
         glBegin(GL_LINES)
         glVertex3f(0, 0, -h)
-        glVertex3f(0, 0, -h - 0.5)
+        glVertex3f(0, 0, -h - 0.28)
         glEnd()
-        glBegin(GL_TRIANGLES)
-        glVertex3f(0, 0, -h - 0.5)
-        glVertex3f(-0.08, 0, -h - 0.3)
-        glVertex3f(0.08, 0, -h - 0.3)
-        glEnd()
+        self._draw_cone(
+            (0, 0, -h - 0.52), (0, 0, -h - 0.28),
+            (1, 0, 0), (0, 1, 0), 0.09,
+        )
         glEnable(GL_LIGHTING)
         
         glPopMatrix()

@@ -19,6 +19,14 @@ class HomePage(QWidget):
     def set_theme(self, dark):
         self.view.set_dark_theme(dark)
 
+    def set_active(self, active):
+        self.receiver.set_active(active)
+        if active:
+            self.view.timer.start(16)
+            self.view.update()
+        else:
+            self.view.timer.stop()
+
     def update_data(self, data):
         if len(data) < 10:
             return
