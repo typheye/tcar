@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
 
 from tcarkit.ui.home_page import HomePage
 from tcarkit.ui.performance_page import PerformancePage
+from tcarkit.ui.vision_page import VisionPage
 
 
 THEME_SYSTEM = "system"
@@ -87,6 +88,9 @@ def apply_theme(app, mode):
         home = getattr(window, "home", None)
         if home:
             home.set_theme(dark)
+        vision = getattr(window, "vision", None)
+        if vision:
+            vision.set_theme(dark)
         performance = getattr(window, "performance", None)
         if performance:
             performance.set_theme(dark)
@@ -237,8 +241,9 @@ class TCarKitWindow(QMainWindow):
         self.setWindowIcon(QIcon(resource_path(os.path.join("assets", "favicon.ico"))))
         self.setMinimumSize(800, 500)
         self.home = HomePage(ip)
+        self.vision = VisionPage(ip)
         self.performance = PerformancePage(ip)
-        self._pages = {"Performance": self.performance}
+        self._pages = {"Vision": self.vision, "Performance": self.performance}
         self._build_menus()
         self.tabs = QTabWidget()
         self.tabs.setTabBar(TabBar())
@@ -253,6 +258,7 @@ class TCarKitWindow(QMainWindow):
         self.tabs.tabBar().setTabButton(home_index, QTabBar.RightSide, None)
         self._restore_session()
         self.home.set_theme(_current_dark)
+        self.vision.set_theme(_current_dark)
         self.performance.set_theme(_current_dark)
         self.showMaximized()
 
@@ -290,6 +296,10 @@ class TCarKitWindow(QMainWindow):
     def _build_menus(self):
         file_menu = self.menuBar().addMenu("File(&F)")
         open_menu = file_menu.addMenu("Open(&O)")
+        vision_action = QAction("Vision", self)
+        vision_action.setData("Vision")
+        vision_action.triggered.connect(self._open_tab)
+        open_menu.addAction(vision_action)
         performance_action = QAction("Performance", self)
         performance_action.setData("Performance")
         performance_action.triggered.connect(self._open_tab)
@@ -350,12 +360,13 @@ class TCarKitWindow(QMainWindow):
         names = self._settings.value("session/tabs", [])
         if isinstance(names, str):
             names = [names]
-        if "Performance" in names and not any(
-            self.tabs.tabText(index) == "Performance"
-            for index in range(self.tabs.count())
-        ):
-            index = self.tabs.addTab(self.performance, "Performance")
-            self._add_close_button(index)
+        for name in ("Vision", "Performance"):
+            if name in names and not any(
+                self.tabs.tabText(index) == name
+                for index in range(self.tabs.count())
+            ):
+                index = self.tabs.addTab(self._pages[name], name)
+                self._add_close_button(index)
 
     def closeEvent(self, event):
         answer = QMessageBox.question(
@@ -371,6 +382,7 @@ class TCarKitWindow(QMainWindow):
         ]
         self._settings.setValue("session/tabs", names)
         self.home.stop()
+        self.vision.stop()
         event.accept()
 
 
