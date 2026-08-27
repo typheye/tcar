@@ -281,6 +281,8 @@ class CameraReceiver(QThread):
 # ============ OpenGL 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柣鎴ｅГ閸婂潡鏌ㄩ弴鐐测偓鍫曞焵椤掆偓閸熷磭绮诲☉妯锋婵☆垳鈷堝Σ顖涚節閻㈤潧浠﹂柛銊ㄦ硾椤繈濡歌娑撳秹鏌￠崒娑崇穿鐟滅増甯楅弲鏌ユ煕濞戝崬鏋︾痪顓涘亾濠碉紕鍋戦崐鎰板疾濠婂牊鍋傞柨鐔哄Т閽冪喓鎲搁幋鐘典笉婵炴垯鍨圭粻濠氭煛閸屾ê鍔氱憸鐗堝哺濮婄粯鎷呴搹鐟扮闂佸憡姊瑰ú鐔煎箖濡警娼╅悹楦挎閻涖儵姊虹化鏇炲⒉缂佸甯￠幃锟犲即閵忥紕鍘撻梺瀹犳〃缁€渚€寮搁妶鍡欑闁割偆鍠愮粈鍫㈢磼?============
 class ThirdPersonView(QGLWidget):
     VEHICLE_MODEL_SIZE = 2.2
+    GRID_RANGE_MM = 1000.0
+    GRID_STEP_MM = 100.0
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -307,6 +309,11 @@ class ThirdPersonView(QGLWidget):
         self.ay = 0.0
         self.az = 0.0
         self.mag_yaw = float("nan")
+        self.obstacle_distance_mm = 5000.0
+        self.obstacle_target_mm = 5000.0
+        self.obstacle_visible = False
+        self.distance_texture = None
+        self.distance_texture_label = None
         self.pitch = 0.0
         self.roll = 0.0
         self.yaw = 0.0
@@ -331,6 +338,8 @@ class ThirdPersonView(QGLWidget):
             self.vehicle_triangles,
             self.vehicle_feature_edges,
             self.vehicle_front_z,
+            self.vehicle_units_per_mm,
+            self.vehicle_obstacle_bounds,
         ) = self._load_vehicle_mesh()
         self.vehicle_display_list = None
         self.vehicle_edge_display_list = None
@@ -409,7 +418,10 @@ class ThirdPersonView(QGLWidget):
             0.0, 0.0, 0.0, 1.0,
         ]
 
-    def set_sensor_data(self, pitch, roll, yaw, ax, ay, az, mag_yaw=float("nan")):
+    def set_sensor_data(
+        self, pitch, roll, yaw, ax, ay, az,
+        mag_yaw=float("nan"), distance_mm=float("nan"),
+    ):
         """Render the OpenGL scene."""
         self.pitch = pitch
         self.roll = roll
@@ -418,6 +430,14 @@ class ThirdPersonView(QGLWidget):
         self.ay = ay
         self.az = az
         self.mag_yaw = mag_yaw
+        if math.isfinite(distance_mm) and 30.0 <= distance_mm < 5000.0:
+            if not self.obstacle_visible:
+                self.obstacle_distance_mm = distance_mm
+            self.obstacle_target_mm = distance_mm
+            self.obstacle_visible = True
+        else:
+            self.obstacle_visible = False
+            self.obstacle_target_mm = 5000.0
 
     def initializeGL(self):
         glClearColor(*self.clear_color)
@@ -484,6 +504,10 @@ class ThirdPersonView(QGLWidget):
         self.cube_roll += (self.target_cube_roll - self.cube_roll) * smooth
         if self.has_quaternion:
             self.cube_quat = self._slerp_quat(self.cube_quat, self.target_cube_quat, smooth)
+        if self.obstacle_visible:
+            self.obstacle_distance_mm += (
+                self.obstacle_target_mm - self.obstacle_distance_mm
+            ) * 0.22
         
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
@@ -654,10 +678,21 @@ class ThirdPersonView(QGLWidget):
                     feature_edges.append((start, end))
 
             front_z = -(bounds_max[2] - center[2]) * scale
-            return triangles, feature_edges, front_z
+            obstacle_bounds = (
+                max(
+                    abs((bounds_min[0] - center[0]) * scale),
+                    abs((bounds_max[0] - center[0]) * scale),
+                ) * 1.08,
+                (bounds_min[1] - center[1]) * scale,
+                (bounds_max[1] - center[1]) * scale,
+            )
+            return triangles, feature_edges, front_z, scale, obstacle_bounds
         except Exception as exc:
             print(f"Unable to load tCar.STL: {exc}")
-            return [], [], -0.6
+            return (
+                [], [], -0.6, cls.VEHICLE_MODEL_SIZE / 188.0,
+                (0.7, -0.6, 0.6),
+            )
 
     def draw_vehicle_model(self):
         """Draw the centered tCar mesh and its existing yellow front arrow."""
@@ -691,6 +726,8 @@ class ThirdPersonView(QGLWidget):
         else:
             self._draw_vehicle_feature_edges()
 
+        self._draw_obstacle_plane()
+
         arrow_base = self.vehicle_front_z - 0.16
         arrow_tip = arrow_base - 0.34
         glColor4f(1.0, 0.9, 0.0, 0.95)
@@ -706,6 +743,105 @@ class ThirdPersonView(QGLWidget):
         glDisable(GL_LINE_SMOOTH)
         glEnable(GL_LIGHTING)
         glPopMatrix()
+
+    def _draw_obstacle_plane(self):
+        if not self.obstacle_visible:
+            return
+        plane_z = (
+            self.vehicle_front_z
+            - self.obstacle_distance_mm * self.vehicle_units_per_mm
+        )
+        grid_extent = self.GRID_RANGE_MM * self.vehicle_units_per_mm
+        if abs(plane_z) > grid_extent:
+            return
+        half_width, bottom, top = self.vehicle_obstacle_bounds
+
+        glDepthMask(GL_FALSE)
+        glColor4f(0.08, 0.92, 0.94, 0.24)
+        glBegin(GL_QUADS)
+        glVertex3f(-half_width, bottom, plane_z)
+        glVertex3f(half_width, bottom, plane_z)
+        glVertex3f(half_width, top, plane_z)
+        glVertex3f(-half_width, top, plane_z)
+        glEnd()
+        glColor4f(0.22, 1.0, 1.0, 0.82)
+        glLineWidth(1.4)
+        glBegin(GL_LINE_LOOP)
+        glVertex3f(-half_width, bottom, plane_z)
+        glVertex3f(half_width, bottom, plane_z)
+        glVertex3f(half_width, top, plane_z)
+        glVertex3f(-half_width, top, plane_z)
+        glEnd()
+        self._draw_distance_texture(
+            self._format_distance(self.obstacle_target_mm),
+            half_width,
+            top,
+            plane_z,
+        )
+        glDepthMask(GL_TRUE)
+
+    def _draw_distance_texture(self, distance, half_width, top, plane_z):
+        label = f"Distance  {distance}"
+        if label != self.distance_texture_label:
+            image = QImage(512, 96, QImage.Format_RGBA8888)
+            image.fill(Qt.transparent)
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.TextAntialiasing)
+            painter.setPen(QColor(82, 164, 232, 248))
+            painter.setFont(QFont("Segoe UI", 28, QFont.DemiBold))
+            painter.drawText(image.rect(), Qt.AlignLeft | Qt.AlignVCenter, label)
+            painter.end()
+
+            upload = image.mirrored(False, True)
+            bits = upload.bits()
+            bits.setsize(upload.byteCount())
+            if self.distance_texture is None:
+                self.distance_texture = glGenTextures(1)
+            glBindTexture(GL_TEXTURE_2D, self.distance_texture)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            glTexImage2D(
+                GL_TEXTURE_2D, 0, GL_RGBA,
+                upload.width(), upload.height(), 0,
+                GL_RGBA, GL_UNSIGNED_BYTE, bytes(bits),
+            )
+            glBindTexture(GL_TEXTURE_2D, 0)
+            self.distance_texture_label = label
+
+        width = min(1.65, half_width * 1.65)
+        height = 0.31
+        left = -half_width + 0.06
+        right = left + width
+        text_top = top - 0.04
+        bottom = text_top - height
+        # Move the decal slightly toward the vehicle to avoid coplanar
+        # z-fighting while keeping it visually attached to the sensor plane.
+        text_z = plane_z + 0.003
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, self.distance_texture)
+        glColor4f(1.0, 1.0, 1.0, 1.0)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0.0, 0.0)
+        glVertex3f(left, bottom, text_z)
+        glTexCoord2f(1.0, 0.0)
+        glVertex3f(right, bottom, text_z)
+        glTexCoord2f(1.0, 1.0)
+        glVertex3f(right, text_top, text_z)
+        glTexCoord2f(0.0, 1.0)
+        glVertex3f(left, text_top, text_z)
+        glEnd()
+        glBindTexture(GL_TEXTURE_2D, 0)
+        glDisable(GL_TEXTURE_2D)
+
+    @staticmethod
+    def _format_distance(distance_mm):
+        if distance_mm < 100.0:
+            return f"{distance_mm:.0f} mm"
+        if distance_mm < 1000.0:
+            return f"{distance_mm / 10.0:.1f} cm"
+        return f"{distance_mm / 1000.0:.2f} m"
 
     def _draw_vehicle_triangles(self):
         glBegin(GL_TRIANGLES)
@@ -746,19 +882,25 @@ class ThirdPersonView(QGLWidget):
         glDisable(GL_LIGHTING)
         
         # ===== 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸绾惧綊鏌熼梻瀵割槮闁汇値鍠楅妵鍕冀椤愵澀绮堕梺鎼炲妼閸婂潡寮诲☉銏╂晝闁挎繂妫涢ˇ銊╂⒑?=====
-        glColor4f(0.15, 0.2, 0.3, 0.6)
         glLineWidth(1.0)
-        
-        grid_size = 10
-        spacing = 0.5
+
+        grid_size = int(round(self.GRID_RANGE_MM / self.GRID_STEP_MM))
+        spacing = self.GRID_STEP_MM * self.vehicle_units_per_mm
+        extent = self.GRID_RANGE_MM * self.vehicle_units_per_mm
         
         glBegin(GL_LINES)
         for i in range(-grid_size, grid_size + 1):
             pos = i * spacing
-            glVertex3f(pos, -0.5, -grid_size * spacing)
-            glVertex3f(pos, -0.5, grid_size * spacing)
-            glVertex3f(-grid_size * spacing, -0.5, pos)
-            glVertex3f(grid_size * spacing, -0.5, pos)
+            if abs(i) == grid_size:
+                glColor4f(0.25, 0.53, 0.78, 0.72)
+            elif i % 5 == 0:
+                glColor4f(0.20, 0.42, 0.64, 0.58)
+            else:
+                glColor4f(0.14, 0.29, 0.45, 0.42)
+            glVertex3f(pos, -0.5, -extent)
+            glVertex3f(pos, -0.5, extent)
+            glVertex3f(-extent, -0.5, pos)
+            glVertex3f(extent, -0.5, pos)
         glEnd()
         
         # ===== 闂傚倸鍊搁崐鎼佸磹閻戣姤鍤勯柛顐ｆ穿缂嶆牠鎮楅敐搴℃灈缂佲偓鐎ｎ偁浜滈柟鎵虫櫅閻掔儤绻涢崗鍏碱棃婵﹦绮幏鍛存惞閻熸壆顐奸梻浣虹帛椤ㄥ繘宕㈤幆褜鍤楀┑鐘叉搐缁犳氨鎲稿鍫熷€?(闂傚倸鍊搁崐鎼佸磹妞嬪孩顐芥慨姗嗗墻閻掍粙鏌ゆ慨鎰偓鏍偓姘煼閺岋綁寮崒姘粯缂備讲鍋撳鑸靛姈閸婂爼鏌ｉ幇顒傛憼闁诲浚鍣ｉ弻銈夊级閹稿骸浠撮梺鍝勭灱閸犳挾妲愰幒妤€顫呴柣妯虹－娴滆埖淇婇悙顏勨偓鎴﹀磿闁秵鍋嬪┑鐘叉搐妗呴梺鍛婃处閸ㄥジ寮崘鈹夸簻闁规壋鏅涢悘鈺冪磼閻樺樊鐓兼慨? =====

@@ -35,7 +35,10 @@ class HomePage(QWidget):
         if len(data) >= 7:
             self.view.set_cube_quaternion(*data[3:7])
         mag = data[14] if len(data) >= 15 else float("nan")
-        self.view.set_sensor_data(pitch, roll, yaw, data[7], data[8], data[9], mag)
+        distance_mm = data[13] if len(data) >= 14 else float("nan")
+        self.view.set_sensor_data(
+            pitch, roll, yaw, data[7], data[8], data[9], mag, distance_mm
+        )
 
     def stop(self):
         self.receiver.stop()
