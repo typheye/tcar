@@ -207,10 +207,7 @@ class Magnetometer:
         strength = math.sqrt(mx * mx + my * my)
         field_valid = self._field_is_valid(strength)
         if field_valid and not saturated and abs(mx) + abs(my) >= 1e-6:
-            # Field test: E/W are correct while N/S are mirrored.  Reflecting
-            # the first horizontal axis gives heading = 180 - heading, which
-            # preserves E/W and swaps the erroneous N/S pair.
-            heading = (math.degrees(math.atan2(my, -mx)) + self.declination) % 360.0
+            heading = (math.degrees(math.atan2(my, mx)) + self.declination) % 360.0
             rel_yaw = wrap_angle((heading - self.yaw_zero) * self.yaw_sign)
             if current_yaw is not None:
                 yaw_error = wrap_angle(rel_yaw - current_yaw)
@@ -239,7 +236,7 @@ class Magnetometer:
             return None
         if not self._field_is_valid(math.sqrt(mx * mx + my * my)):
             return None
-        heading = math.degrees(math.atan2(my, -mx)) + self.declination
+        heading = math.degrees(math.atan2(my, mx)) + self.declination
         self.last_heading = heading % 360.0
         return self.last_heading
 

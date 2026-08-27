@@ -58,44 +58,6 @@
             "problemMatcher": []
         },
         {
-            "label": "磁航向校准",
-            "type": "shell",
-            "icon": {
-                "id": "compass",
-                "tooltip": "校准整车磁力计和 NSEW 航向"
-            },
-            "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
-            "args": [
-                "--mag-cal"
-            ],
-            "group": "build",
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated",
-                "focus": true
-            },
-            "problemMatcher": []
-        },
-        {
-            "label": "Yaw比例校准",
-            "type": "shell",
-            "icon": {
-                "id": "sync",
-                "tooltip": "用三整圈校准真实角度和理论角度比例"
-            },
-            "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
-            "args": [
-                "--yaw-cal"
-            ],
-            "group": "build",
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated",
-                "focus": true
-            },
-            "problemMatcher": []
-        },
-        {
             "label": "SSH",
             "type": "shell",
             "icon": {

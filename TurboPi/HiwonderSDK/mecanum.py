@@ -19,15 +19,16 @@ class MecanumChassis:
         self.velocity = 0
         self.direction = 0
         self.angular_rate = 0
-        self.minimum_motor_speed = 18
+        # Below this PWM the loaded mecanum motors stall and emit a sustained
+        # high-pitched tone. Keep every nonzero wheel command driveable.
+        self.minimum_motor_speed = 26
 
     def _motor_command(self, value):
-        value = int(value)
-        if value == 0:
+        if abs(value) < 1e-9:
             return 0
         if abs(value) < self.minimum_motor_speed:
             return self.minimum_motor_speed if value > 0 else -self.minimum_motor_speed
-        return max(-100, min(100, value))
+        return int(max(-100, min(100, round(value))))
 
     def reset_motors(self):
         for i in range(1, 5):

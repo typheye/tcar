@@ -28,14 +28,12 @@ if "%1"=="--ssh" goto ssh_terminal
 if "%1"=="--reboot" goto reboot_only
 if "%1"=="--format" goto format
 if "%1"=="--log" goto view_log
-if "%1"=="--mag-cal" goto mag_cal
-if "%1"=="--yaw-cal" goto yaw_cal
 if "%1"=="--help" goto show_help
 goto show_help
 
 :update_restart
 echo [1/2] Uploading files to Raspberry Pi...
-tar --exclude=__pycache__ --exclude=*.pyc -C "%BASE_DIR%" -cf - TurboPi | ssh pi@%IP% "tar -xf - -C %TARGET_DIR%"
+scp -r "%BASE_DIR%\TurboPi" pi@%IP%:%TARGET_DIR%
 if !errorlevel! neq 0 (
   echo [ERROR] Upload failed!
   exit /b 1
@@ -80,18 +78,6 @@ echo ================================
 ssh pi@%IP% "sudo journalctl -u turbopi.service -f"
 exit /b 0
 
-:mag_cal
-echo Calibrating the magnetometer for 30 seconds...
-echo Rotate the complete, powered car slowly through all headings.
-ssh -t pi@%IP% "sudo systemctl stop turbopi.service; cd ~/TurboPi; python3 tCar.py --mag-cal 30; rc=$?; sudo systemctl start turbopi.service; exit $rc"
-exit /b %errorlevel%
-
-:yaw_cal
-echo Calibrating yaw scale for exactly 3 full turns in 25 seconds...
-echo Rotate the complete car three times in one direction and stop at the starting heading.
-ssh -t pi@%IP% "sudo systemctl stop turbopi.service; cd ~/TurboPi; python3 tCar.py --yaw-cal 3 25; rc=$?; sudo systemctl start turbopi.service; exit $rc"
-exit /b %errorlevel%
-
 :show_help
 echo.
 echo Raspberry Pi Debug Script
@@ -103,8 +89,6 @@ echo Options:
 echo  --reset  Upload and restart TurboPi service
 echo  --ssh    Open SSH terminal to Raspberry Pi
 echo  --log    View turbopi.service real-time logs
-echo  --mag-cal Calibrate absolute magnetic heading
-echo  --yaw-cal Calibrate DMP yaw scale with three full turns
 echo  --reboot Reboot Raspberry Pi
 echo  --format Remove ~/turbopi directory on Raspberry Pi
 echo  --help   Show this help message

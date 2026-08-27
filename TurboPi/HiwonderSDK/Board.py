@@ -24,6 +24,7 @@ __servo_angle = [0, 0, 0, 0, 0, 0]
 __servo_pulse = [0, 0, 0, 0, 0, 0]
 __i2c = 1
 __i2c_addr = 0x7A
+__MINIMUM_MOTOR_SPEED = 26
 
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BOARD)
@@ -44,6 +45,9 @@ for i in range(RGB.numPixels()):
 def setMotor(index, speed):
     if index < 1 or index > 4:
         raise AttributeError("Invalid motor num: %d"%index)
+    speed = int(speed)
+    if speed != 0 and abs(speed) < __MINIMUM_MOTOR_SPEED:
+        speed = __MINIMUM_MOTOR_SPEED if speed > 0 else -__MINIMUM_MOTOR_SPEED
     if index == 2 or index == 4:
         speed = speed
     else:
@@ -392,4 +396,3 @@ setBuzzer(0)
 # setMotor(2, 60)
 # setMotor(3, 60)
 # setMotor(4, 60)
-

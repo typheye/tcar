@@ -47,6 +47,7 @@ class ChassisController:
         # 小车控制参数
         self.max_speed = 60      # 最大线速度 0~60
         self.max_yaw_rate = 2.0   # 最大偏航角速度 -2~2
+        self.min_yaw_rate = 0.22  # keeps all rotation wheels above PWM 26
         self.move_active = False  # 移动激活状态
         
         # 左摇杆控制
@@ -122,7 +123,8 @@ class ChassisController:
             return
         
         # 转向
-        yaw_rate = -abs(yaw_rate) if direction == 1 else abs(yaw_rate)
+        yaw_rate = max(self.min_yaw_rate, abs(yaw_rate))
+        yaw_rate = -yaw_rate if direction == 1 else yaw_rate
         try:
             self.chassis.set_velocity(0, 0, yaw_rate)
         except Exception as e:
@@ -387,11 +389,11 @@ class PS2Controller:
                     last_phase = phase
                 if auto_turning and progress is not None:
                     if progress >= 352.0:
-                        desired_rate = 0.08
-                    elif progress >= 330.0:
-                        desired_rate = 0.14
-                    elif progress >= 285.0:
                         desired_rate = 0.22
+                    elif progress >= 330.0:
+                        desired_rate = 0.22
+                    elif progress >= 285.0:
+                        desired_rate = 0.24
                     else:
                         desired_rate = 0.30
                     if desired_rate != turn_rate:
