@@ -124,24 +124,29 @@ class ChassisController:
         """
         if self.chassis is None:
             print(f"模拟: {'左' if direction == 1 else '右'}转")
-            return
+            return True
         
         # 转向
         yaw_rate = max(self.min_yaw_rate, abs(yaw_rate))
         yaw_rate = -yaw_rate if direction == 1 else yaw_rate
         try:
             self.chassis.set_velocity(0, 0, yaw_rate)
+            return True
         except Exception as e:
             print(f"平移控制错误: {e}")
+            return False
     
     def stop(self):
         """停止小车"""
         self.move_active = False
-        if self.chassis is not None:
-            try:
-                self.chassis.reset_motors()
-            except:
-                pass
+        if self.chassis is None:
+            return True
+        try:
+            self.chassis.reset_motors()
+            return True
+        except Exception as exc:
+            print(f"底盘停止错误: {exc}")
+            return False
 
 class ServoController:
     HORIZONTAL_SERVO_ID = 2
@@ -294,6 +299,7 @@ class PS2Controller:
         # 按钮状态
         self.l1_pressed = False
         self.r1_pressed = False
+        self.shoulder_turn_state = None
         self.calibration_combo_active = None
         self.calibration_combo_pending = None
         self.calibration_combo_since = None
@@ -350,6 +356,43 @@ class PS2Controller:
         except:
             pass
         return False
+
+    def _update_shoulder_turn(self, l1_current, r1_current):
+        """Apply one coherent chassis command for the complete L1/R1 state."""
+        if l1_current and not self.l1_pressed:
+            print("L1按下: 左转向")
+            if not self.shield:
+                BZ.keydown_PSControler()
+        elif not l1_current and self.l1_pressed:
+            print("L1释放")
+
+        if r1_current and not self.r1_pressed:
+            print("R1按下: 右转向")
+            if not self.shield:
+                BZ.keydown_PSControler()
+        elif not r1_current and self.r1_pressed:
+            print("R1释放")
+
+        self.l1_pressed = bool(l1_current)
+        self.r1_pressed = bool(r1_current)
+        if self.l1_pressed == self.r1_pressed:
+            # None hands control back to the left stick; zero represents the
+            # deliberate conflict state where both shoulder keys are held.
+            desired_state = 0 if self.l1_pressed else None
+        else:
+            desired_state = 1 if self.l1_pressed else -1
+
+        if desired_state == self.shoulder_turn_state:
+            return
+        if desired_state in (None, 0) or not self.shield:
+            applied = self.chassis_ctrl.stop()
+        else:
+            applied = self.chassis_ctrl.turn(desired_state)
+        # A four-wheel update consists of four independent I2C writes. Keep
+        # the old state after a partial failure so the whole command is retried
+        # on the next 50 Hz controller frame.
+        if applied:
+            self.shoulder_turn_state = desired_state
 
     def request_sensor_calibration(self, kind):
         """Request one sensor-specific calibration from the tCar service."""
@@ -590,33 +633,12 @@ class PS2Controller:
                     time.sleep(0.5)
                     return
             
-            # L1 左转向
-            l1_current = self.get_safe_button(key_map["PSB_L1"])
-            if l1_current and not self.l1_pressed:
-                print("L1按下: 左转向")
-                self.l1_pressed = True
-                if self.shield:  # 模拟模式
-                    self.chassis_ctrl.turn(1)  # 左转向
-                else:
-                    BZ.keydown_PSControler()
-            elif not l1_current and self.l1_pressed:
-                print("L1释放")
-                self.l1_pressed = False
-                self.chassis_ctrl.stop()
-            
-            # R1 右转向
-            l2_current = self.get_safe_button(key_map["PSB_R1"])
-            if l2_current and not self.r1_pressed:
-                print("R1按下: 右转向")
-                self.r1_pressed = True
-                if self.shield:  # 模拟模式
-                    self.chassis_ctrl.turn(-1)  # 右转向
-                else:
-                    BZ.keydown_PSControler()
-            elif not l2_current and self.r1_pressed:
-                print("R1释放")
-                self.r1_pressed = False
-                self.chassis_ctrl.stop()
+            # Resolve both shoulder keys together so rapid direction changes
+            # cannot leave a stale stop or partial wheel command behind.
+            self._update_shoulder_turn(
+                self.get_safe_button(key_map["PSB_L1"]),
+                self.get_safe_button(key_map["PSB_R1"]),
+            )
 
             # L2
             if self.get_safe_button(key_map["PSB_L2"]):
@@ -755,6 +777,9 @@ class PS2Controller:
                 if self.connected:
                     self.connected = False
                     self.chassis_ctrl.stop()
+                    self.l1_pressed = False
+                    self.r1_pressed = False
+                    self.shoulder_turn_state = None
                     if self.js:
                         self.js.quit()
                     pygame.joystick.quit()
