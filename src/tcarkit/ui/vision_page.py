@@ -111,11 +111,10 @@ class VisionPage(QWidget):
         # short circular average only to establish absolute NSEW, then let the
         # calibrated inertial yaw carry all subsequent turns.
         if self.heading_anchor is None and math.isfinite(mag):
-            # Physical mapping confirmed by testing: N/S must be reflected,
-            # while E/W remain unchanged. The transform 180-heading does
-            # exactly that before the absolute anchor is established.
-            absolute_mag = (180.0 - mag) % 360.0
-            self.heading_anchor_samples.append((absolute_mag - yaw) % 360.0)
+            # tCar.py already reflects the magnetic X axis, which swaps N/S
+            # while preserving E/W. Applying 180-heading again here would
+            # cancel that correction.
+            self.heading_anchor_samples.append((mag - yaw) % 360.0)
             if len(self.heading_anchor_samples) >= 12:
                 anchor, confidence = self._circular_mean(self.heading_anchor_samples)
                 if confidence >= 0.72:
