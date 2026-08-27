@@ -11,6 +11,7 @@ import sys
 import os
 import json
 import threading
+from collections import deque
 sys.path.append('/home/pi/TurboPi/')
 from smbus2 import SMBus, i2c_msg
 
@@ -40,7 +41,7 @@ class Sonar:
                 
                 data = list(read)
                 if len(data) >= 2:
-                    dist = (data[0] << 8) | data[1]
+                    dist = data[0] | (data[1] << 8)
                     if dist < 30 or dist > 5000:
                         dist = 5000
         except Exception as e:
@@ -935,12 +936,8 @@ class MPU6050:
         """Convert upside-down gyro attitude yaw to clockwise compass heading."""
         return (-float(yaw)) % 360.0
 
-    def recalibrate_all(self, mag_seconds=30, phase_callback=None):
-        """Recalibrate inertial zero/bias and the complete-car magnetometer.
-
-        This is the public runtime calibration interface used by the gamepad
-        shortcut and may also be called by future RPC/UI integrations.
-        """
+    def recalibrate_inertial(self, phase_callback=None):
+        """Reinitialize gyro bias, attitude origin and heading origin only."""
         notify = phase_callback or (lambda phase: None)
         notify("gyro")
         self.use_dmp = False
@@ -950,7 +947,12 @@ class MPU6050:
         self.estimator = AttitudeEstimator(sample_freq=100)
         self.calibrate_attitude_zero(samples=100)
         self._init_dmp()
+        notify("complete")
+        return True
 
+    def recalibrate_magnetometer(self, mag_seconds=30, phase_callback=None):
+        """Calibrate magnetic axes during one gyro-measured car rotation."""
+        notify = phase_callback or (lambda phase: None)
         notify("magnetometer")
         if not self.mag.calibrate_hard_soft_iron(
             seconds=mag_seconds,
@@ -960,14 +962,9 @@ class MPU6050:
             raise RuntimeError("magnetometer calibration failed")
 
         # Tell the controller to stop first, then allow the chassis to settle
-        # before taking the new DMP/software zero.
+        # before publishing completion. Inertial zero remains untouched.
         notify("stopping")
         time.sleep(0.75)
-        notify("finalizing")
-        if self.use_dmp:
-            self.calibrate_dmp_zero(samples=80)
-        else:
-            self.estimator.calibrate_zero(samples=0)
         self.last_mag_debug = None
         notify("complete")
         return True
@@ -1232,7 +1229,8 @@ class MPU6050:
 
 # ============ UDP闂佸搫鐗嗙粔瀛樻叏閻旂厧闂?============
 class SensorServer:
-    CALIBRATE_ALL_COMMAND = b'calibrate_all'
+    CALIBRATE_INERTIAL_COMMAND = b'calibrate_inertial'
+    CALIBRATE_MAGNETOMETER_COMMAND = b'calibrate_magnetometer'
     CALIBRATION_STATUS_COMMAND = b'calibration_status'
     PERFORMANCE_STATUS_COMMAND = b'performance_status'
     DESKTOP_SERVICES_TOGGLE_COMMAND = b'desktop_services_toggle'
@@ -1261,6 +1259,7 @@ class SensorServer:
         self.last_packet = None
         self.battery_reader = battery_reader
         self.last_distance = 5000.0
+        self.sonar_samples = deque(maxlen=3)
         self.sonar_thread = None
         self.performance_cpu_sample = None
         self.desktop_services_callback = desktop_services_callback
@@ -1293,44 +1292,65 @@ class SensorServer:
                 continue
             try:
                 with self.sensor_lock:
-                    self.last_distance = float(self.sonar.getDistance())
+                    measured_mm = float(self.sonar.getDistance())
+                if math.isfinite(measured_mm) and 30.0 <= measured_mm < 5000.0:
+                    self.sonar_samples.append(measured_mm)
+                    samples = sorted(self.sonar_samples)
+                    median_mm = samples[len(samples) // 2]
+                    if self.last_distance >= 5000.0:
+                        self.last_distance = median_mm
+                    else:
+                        self.last_distance += (median_mm - self.last_distance) * 0.45
+                else:
+                    self.sonar_samples.clear()
+                    self.last_distance = 5000.0
             except Exception as exc:
                 print(f"Sonar background read failed: {exc}")
-            time.sleep(0.15)
+                self.sonar_samples.clear()
+                self.last_distance = 5000.0
+            time.sleep(0.1)
 
-    def request_full_calibration(self, mag_seconds=30):
-        """Start one asynchronous full calibration, returning its state."""
+    def request_calibration(self, kind, mag_seconds=30):
+        """Start one asynchronous sensor-specific calibration."""
+        if kind not in ("inertial", "magnetometer"):
+            raise ValueError(f"Unknown calibration kind: {kind}")
         if not self.calibration_lock.acquire(False):
             return False, self.calibration_status
-        self.calibration_status = "starting"
+        self.calibration_status = f"starting:{kind}"
         thread = threading.Thread(
-            target=self._run_full_calibration,
-            args=(mag_seconds,),
-            name="tcar-calibration",
+            target=self._run_calibration,
+            args=(kind, mag_seconds),
+            name=f"tcar-{kind}-calibration",
             daemon=True,
         )
         thread.start()
         return True, self.calibration_status
 
-    def _run_full_calibration(self, mag_seconds):
+    def _run_calibration(self, kind, mag_seconds):
         success = False
         suspend_sonar = getattr(self.sonar, "setSuspended", None)
         try:
             if suspend_sonar:
                 suspend_sonar(True)
             with self.sensor_lock:
-                self.mpu.recalibrate_all(
-                    mag_seconds=mag_seconds,
-                    phase_callback=lambda status: (
-                        None if status == "complete"
-                        else self._set_calibration_status(status)
-                    ),
+                phase_callback = lambda status: (
+                    None if status == "complete"
+                    else self._set_calibration_status(status)
                 )
+                if kind == "inertial":
+                    self.mpu.recalibrate_inertial(
+                        phase_callback=phase_callback,
+                    )
+                else:
+                    self.mpu.recalibrate_magnetometer(
+                        mag_seconds=mag_seconds,
+                        phase_callback=phase_callback,
+                    )
             success = True
             self._set_calibration_status("restoring_sonar")
         except Exception as exc:
             self.calibration_status = f"failed:{exc}"
-            print(f"Full sensor calibration failed: {exc}")
+            print(f"{kind.capitalize()} calibration failed: {exc}")
         finally:
             # Calibration exercises the shared I2C bus heavily.  Restore the
             # illuminated sonar to a deterministic non-breathing state.
@@ -1449,8 +1469,16 @@ class SensorServer:
                 if addr[0] in self.paused_client_ips:
                     continue
 
-                if data == self.CALIBRATE_ALL_COMMAND:
-                    started, status = self.request_full_calibration()
+                if data in (
+                    self.CALIBRATE_INERTIAL_COMMAND,
+                    self.CALIBRATE_MAGNETOMETER_COMMAND,
+                ):
+                    kind = (
+                        "inertial"
+                        if data == self.CALIBRATE_INERTIAL_COMMAND
+                        else "magnetometer"
+                    )
+                    started, status = self.request_calibration(kind)
                     reply = f"{'started' if started else 'busy'}:{status}".encode()
                     self.sock.sendto(reply, addr)
                     continue

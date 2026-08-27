@@ -27,7 +27,7 @@ def keydown_combination_PSControler():
 
 
 def calibration_started():
-    """Three crisp beeps after a full-calibration request is accepted."""
+    """Three crisp beeps after a sensor-calibration request is accepted."""
     with _sound_lock:
         for index in range(3):
             _pulse(0.07)

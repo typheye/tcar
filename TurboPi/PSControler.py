@@ -289,13 +289,12 @@ class PS2Controller:
         # 按钮状态
         self.l1_pressed = False
         self.r1_pressed = False
-        self.calibration_combo_active = False
+        self.calibration_combo_active = None
+        self.calibration_combo_pending = None
         self.calibration_combo_since = None
         self.calibration_combo_cooldown_until = 0.0
         self.calibration_monitor = None
-        self.route_combo_active = False
-        self.route_combo_since = None
-        self.route_combo_cooldown_until = 0.0
+        self.suppressed_combo_active = None
         self.last_camera_pan_angle = None
         self.last_camera_pan_publish = 0.0
         
@@ -347,8 +346,10 @@ class PS2Controller:
             pass
         return False
 
-    def request_full_sensor_calibration(self):
-        """Request full gyro/DMP/magnetometer calibration from tCar service."""
+    def request_sensor_calibration(self, kind):
+        """Request one sensor-specific calibration from the tCar service."""
+        if kind not in ("inertial", "magnetometer"):
+            raise ValueError(f"未知校准类型: {kind}")
         if self.calibration_monitor and self.calibration_monitor.is_alive():
             print("传感器校准已在进行")
             return
@@ -357,7 +358,8 @@ class PS2Controller:
         self.current_speed = {1: 0, 2: 0}
         self.calibration_monitor = threading.Thread(
             target=self._monitor_sensor_calibration,
-            name="sensor-calibration-monitor",
+            args=(kind,),
+            name=f"{kind}-calibration-monitor",
             daemon=True,
         )
         self.calibration_monitor.start()
@@ -389,16 +391,23 @@ class PS2Controller:
         finally:
             sock.close()
 
-    def _monitor_sensor_calibration(self):
+    def _monitor_sensor_calibration(self, kind):
         auto_turning = False
         turn_rate = None
         try:
-            reply = self._sensor_command(b"calibrate_all")
+            command = {
+                "inertial": b"calibrate_inertial",
+                "magnetometer": b"calibrate_magnetometer",
+            }[kind]
+            reply = self._sensor_command(command)
             print(f"传感器校准请求: {reply}")
-            if not reply.startswith(("started:", "busy:")):
+            if reply.startswith("busy:"):
+                print("传感器校准忙，本次请求未执行")
+                BZ.init(0.08)
+                return
+            if not reply.startswith("started:"):
                 raise RuntimeError(reply)
-            if reply.startswith("started:"):
-                BZ.calibration_started()
+            BZ.calibration_started()
             last_phase = None
             while RUNNING:
                 status = self._sensor_command(b"calibration_status")
@@ -411,7 +420,7 @@ class PS2Controller:
                         pass
                 if phase != last_phase:
                     print(f"传感器校准阶段: {status}")
-                    if phase == "magnetometer":
+                    if kind == "magnetometer" and phase == "magnetometer":
                         # tCar integrates the calibrated Z gyro and ends this
                         # phase after one real 360-degree rotation.
                         turn_rate = 0.30
@@ -504,64 +513,70 @@ class PS2Controller:
         """处理按钮输入"""
         try:
             select_pressed = self.get_safe_button(key_map["PSB_SELECT"])
+            a_pressed = self.get_safe_button(key_map["PSB_A"])
+            b_pressed = self.get_safe_button(key_map["PSB_B"])
             x_pressed = self.get_safe_button(key_map["PSB_X"])
             y_pressed = self.get_safe_button(key_map["PSB_Y"])
             now = time.monotonic()
 
-            # SELECT + Y: pause/resume services directed at desktop clients.
-            if self.route_combo_active:
-                if not select_pressed and not y_pressed:
-                    self.route_combo_active = False
-                    self.route_combo_since = None
-                    self.route_combo_cooldown_until = now + 0.35
+            # SELECT+X and SELECT+Y are deliberately unassigned. Latch the
+            # chord until both keys are released so release order cannot
+            # leak through as a normal single-button press or sound.
+            if self.suppressed_combo_active is not None:
+                face_pressed = (
+                    x_pressed
+                    if self.suppressed_combo_active == "x"
+                    else y_pressed
+                )
+                if not select_pressed and not face_pressed:
+                    self.suppressed_combo_active = None
                 return
-            if select_pressed and y_pressed:
-                if now < self.route_combo_cooldown_until:
-                    return
-                if self.route_combo_since is None:
-                    self.route_combo_since = now
-                    return
-                if now - self.route_combo_since < 0.12:
-                    return
-                self.route_combo_active = True
-                self.route_combo_since = None
-                try:
-                    state = self._sensor_command(b"desktop_services_toggle")
-                    if state == "paused":
-                        print("SELECT + Y: 已暂停上位机路由服务")
-                        BZ.desktop_services_paused()
-                    elif state == "active":
-                        print("SELECT + Y: 已恢复上位机路由服务")
-                        BZ.desktop_services_resumed()
-                except Exception as exc:
-                    print(f"上位机路由服务切换失败: {exc}")
-                    BZ.init(0.08)
+            if select_pressed and (x_pressed or y_pressed):
+                self.suppressed_combo_active = "x" if x_pressed else "y"
                 return
-            self.route_combo_since = None
 
-            # SELECT + X: full inertial and magnetometer recalibration.
-            if self.calibration_combo_active:
-                if not select_pressed and not x_pressed:
-                    self.calibration_combo_active = False
+            # SELECT+A recalibrates inertial origin; SELECT+B performs the
+            # one-turn magnetic-axis calibration. Both retain the existing
+            # debounce and calibration sounds.
+            if self.calibration_combo_active is not None:
+                active_pressed = (
+                    a_pressed
+                    if self.calibration_combo_active == "inertial"
+                    else b_pressed
+                )
+                if not select_pressed and not active_pressed:
+                    self.calibration_combo_active = None
+                    self.calibration_combo_pending = None
                     self.calibration_combo_since = None
                     self.calibration_combo_cooldown_until = now + 0.35
                 return
-            if select_pressed and x_pressed:
+
+            combo_kind = None
+            if select_pressed and a_pressed != b_pressed:
+                combo_kind = "inertial" if a_pressed else "magnetometer"
+            if combo_kind is not None:
                 if now < self.calibration_combo_cooldown_until:
                     return
-                if self.calibration_combo_since is None:
+                if self.calibration_combo_pending != combo_kind:
+                    self.calibration_combo_pending = combo_kind
                     self.calibration_combo_since = now
                     return
-                # Both buttons must remain down for 120 ms.  This filters
-                # contact bounce and prevents a nearby single-X event.
                 if now - self.calibration_combo_since < 0.12:
                     return
-                self.calibration_combo_active = True
+                self.calibration_combo_active = combo_kind
+                self.calibration_combo_pending = None
                 self.calibration_combo_since = None
-                print("SELECT + X: 重新校准陀螺仪、姿态零点和磁力计")
-                self.request_full_sensor_calibration()
+                if combo_kind == "inertial":
+                    print("SELECT + A: 重新校准陀螺仪、姿态和初始朝向")
+                else:
+                    print("SELECT + B: 原地旋转一圈校准磁力轴")
+                self.request_sensor_calibration(combo_kind)
                 return
+            self.calibration_combo_pending = None
             self.calibration_combo_since = None
+
+            if select_pressed and (a_pressed or b_pressed):
+                return
 
             # SELECT + START 切换模式
             if select_pressed:
