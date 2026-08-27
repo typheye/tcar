@@ -7,7 +7,10 @@ a = Analysis(
     [str(root / "app.py")],
     pathex=[str(source_root)],
     binaries=[],
-    datas=[(str(root / "assets" / "favicon.ico"), "tcarkit/assets")],
+    datas=[
+        (str(root / "assets" / "favicon.ico"), "tcarkit/assets"),
+        (str(root / "assets" / "tCar.STL"), "tcarkit/assets"),
+    ],
     hiddenimports=["PyQt5", "PyQt5.QtOpenGL", "OpenGL", "pyqtgraph"],
     noarchive=False,
 )

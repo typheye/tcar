@@ -11,6 +11,7 @@ import urllib.request
 import urllib.error
 import threading
 from collections import deque
+from pathlib import Path
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
@@ -279,6 +280,8 @@ class CameraReceiver(QThread):
 
 # ============ OpenGL 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柣鎴ｅГ閸婂潡鏌ㄩ弴鐐测偓鍫曞焵椤掆偓閸熷磭绮诲☉妯锋婵☆垳鈷堝Σ顖涚節閻㈤潧浠﹂柛銊ㄦ硾椤繈濡歌娑撳秹鏌￠崒娑崇穿鐟滅増甯楅弲鏌ユ煕濞戝崬鏋︾痪顓涘亾濠碉紕鍋戦崐鎰板疾濠婂牊鍋傞柨鐔哄Т閽冪喓鎲搁幋鐘典笉婵炴垯鍨圭粻濠氭煛閸屾ê鍔氱憸鐗堝哺濮婄粯鎷呴搹鐟扮闂佸憡姊瑰ú鐔煎箖濡警娼╅悹楦挎閻涖儵姊虹化鏇炲⒉缂佸甯￠幃锟犲即閵忥紕鍘撻梺瀹犳〃缁€渚€寮搁妶鍡欑闁割偆鍠愮粈鍫㈢磼?============
 class ThirdPersonView(QGLWidget):
+    VEHICLE_MODEL_SIZE = 2.2
+
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -323,6 +326,14 @@ class ThirdPersonView(QGLWidget):
         self.last_fps_update = time.time()
         self.current_fps = 0
         self.clear_color = (0.1176, 0.1176, 0.1176, 1.0)
+        self.vehicle_color = (0.64, 0.66, 0.70)
+        (
+            self.vehicle_triangles,
+            self.vehicle_feature_edges,
+            self.vehicle_front_z,
+        ) = self._load_vehicle_mesh()
+        self.vehicle_display_list = None
+        self.vehicle_edge_display_list = None
         
         self.setMinimumSize(800, 600)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -345,6 +356,9 @@ class ThirdPersonView(QGLWidget):
     def set_dark_theme(self, dark):
         value = 30.0 / 255.0 if dark else 0.94
         self.clear_color = (value, value, value, 1.0)
+        self.vehicle_color = (
+            (0.64, 0.66, 0.70) if dark else (0.38, 0.40, 0.44)
+        )
         if self.isValid():
             self.makeCurrent()
             glClearColor(*self.clear_color)
@@ -413,14 +427,22 @@ class ThirdPersonView(QGLWidget):
         glEnable(GL_LIGHT1)
         glEnable(GL_COLOR_MATERIAL)
         glEnable(GL_BLEND)
+        glEnable(GL_NORMALIZE)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        
-        glLightfv(GL_LIGHT0, GL_POSITION, [5.0, 10.0, 5.0, 1.0])
-        glLightfv(GL_LIGHT0, GL_AMBIENT, [0.3, 0.3, 0.3, 1.0])
-        glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.8, 0.8, 0.8, 1.0])
-        
-        glLightfv(GL_LIGHT1, GL_POSITION, [-5.0, -5.0, -5.0, 1.0])
-        glLightfv(GL_LIGHT1, GL_AMBIENT, [0.1, 0.1, 0.15, 1.0])
+
+        glLightModelfv(GL_LIGHT_MODEL_AMBIENT, [0.08, 0.08, 0.09, 1.0])
+        glLightfv(GL_LIGHT0, GL_POSITION, [4.0, 7.0, 6.0, 0.0])
+        glLightfv(GL_LIGHT0, GL_AMBIENT, [0.04, 0.04, 0.04, 1.0])
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.95, 0.95, 0.92, 1.0])
+        glLightfv(GL_LIGHT0, GL_SPECULAR, [0.55, 0.55, 0.52, 1.0])
+
+        glLightfv(GL_LIGHT1, GL_POSITION, [-5.0, 3.0, -4.0, 0.0])
+        glLightfv(GL_LIGHT1, GL_AMBIENT, [0.0, 0.0, 0.0, 1.0])
+        glLightfv(GL_LIGHT1, GL_DIFFUSE, [0.36, 0.40, 0.48, 1.0])
+        glLightfv(GL_LIGHT1, GL_SPECULAR, [0.12, 0.14, 0.18, 1.0])
+        glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, [0.32, 0.34, 0.38, 1.0])
+        glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 42.0)
+        self._compile_vehicle_display_list()
 
     def resizeGL(self, w, h):
         glViewport(0, 0, w, h)
@@ -479,7 +501,7 @@ class ThirdPersonView(QGLWidget):
         self.draw_grid_with_axes()
         
         # 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸绾惧綊鏌ｉ幋锝呅撻柛濠傛健閺屻劑寮撮悙娴嬪亾瑜版帒鐤炬い蹇撶墛閳锋帒霉閿濆牊顏犻柕鍡楋躬閺岋繝宕ㄩ鍓х厜闂侀潧妫楅崯鏉戠暦婵傜顫呴柣妯垮皺娴滀即姊绘担绋挎毐闁圭⒈鍋婂畷顖炴偐鐠囪尙锛涢梺鐟板⒔缁垶寮查弻銉ョ缂侇喖鍘滈崑鎾绘嚑椤掆偓閸ゎ剟姊婚崒娆掑厡缂侇噮鍨堕獮鎰節濮橆厼浠梺闈涱槴閺呮粎绮?(婵犵數濮烽弫鍛婃叏閻㈠壊鏁婇柡宥庡幖缁愭淇婇妶鍛殲鐎规洘鐓￠弻鐔兼焽閿曗偓閺嬨倗绱掗埀顒佺節閸嬵垰缍婇弫鎰板川椤撗勵棏闂備胶绮敮濠勫垝濞嗘挸钃熼柨婵嗘啒閺冨牆鐒垫い鎺戝閸嬪绻濇繝鍌氭殧闁逞屽墯鐢€崇暦婵傜鍗抽柣鏂挎惈楠炲牓姊绘担鍛婃儓婵炲眰鍨藉畷婵嗙暆閸曨偄鍤戝┑鐐村灦閻燂絾绂?
-        self.draw_cube()
+        self.draw_vehicle_model()
         
         # 闂傚倸鍊搁崐鎼佸磹閻戣姤鍤勯柛顐ｆ穿缂嶆牠鎮楅敐搴℃灈缂佲偓鐎ｎ偁浜滈柟鎵虫櫅閻掔儤绻涢崗鍏碱棃婵﹦绮幏鍛存惞閻熸壆顐奸梻浣虹帛椤ㄥ繘宕㈤幆褜鍤楀┑鐘叉搐缁犳氨鎲稿鍫熷€块柤鎭掑劘娴滄粓鐓崶銊﹀鞍妞ゃ儲鍨块弻娑氣偓锝庡亝鐏忣參鏌嶉挊澶樻Ц闁宠绉归、妯款槺闂侇収鍨堕弻鐔碱敍濞嗘垹鐛㈤悗瑙勬礈閸忔﹢銆佸鈧幃鈺冨枈婢跺苯绨ラ梻鍌氬€风欢姘跺焵椤掑倸浠滈柤娲诲灡閺呭墎鈧數纭堕崑鎾舵喆閸曨剙顦╅梺绋款儏閿曘倝鎮鹃悜鑺ュ亜缁炬媽椴搁弲銏ゆ⒑缁嬫寧婀版慨妯稿妿缁?
         # The Home scene intentionally has no screen-space orientation widget.
@@ -514,6 +536,209 @@ class ThirdPersonView(QGLWidget):
         glVertex3f(*base)
         for index in range(segments, -1, -1):
             glVertex3f(*ring[index % segments])
+        glEnd()
+
+    @classmethod
+    def _load_vehicle_mesh(cls):
+        """Load, center, scale and align the binary STL with vehicle axes."""
+        if hasattr(sys, "_MEIPASS"):
+            model_path = Path(sys._MEIPASS) / "tcarkit" / "assets" / "tCar.STL"
+        else:
+            model_path = Path(__file__).resolve().parent.parent / "assets" / "tCar.STL"
+
+        try:
+            payload = model_path.read_bytes()
+            if len(payload) < 84:
+                raise ValueError("STL header is incomplete")
+            triangle_count = struct.unpack_from("<I", payload, 80)[0]
+            if len(payload) != 84 + triangle_count * 50:
+                raise ValueError("Only binary STL models are supported")
+
+            source = []
+            bounds_min = [float("inf")] * 3
+            bounds_max = [float("-inf")] * 3
+            signed_volume = 0.0
+            centroid_sum = [0.0, 0.0, 0.0]
+            for index in range(triangle_count):
+                values = struct.unpack_from("<12fH", payload, 84 + index * 50)
+                vertices = (values[3:6], values[6:9], values[9:12])
+                source.append(vertices)
+                for vertex in vertices:
+                    for axis in range(3):
+                        bounds_min[axis] = min(bounds_min[axis], vertex[axis])
+                        bounds_max[axis] = max(bounds_max[axis], vertex[axis])
+
+                a, b, c = vertices
+                volume = (
+                    a[0] * (b[1] * c[2] - b[2] * c[1])
+                    - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0])
+                ) / 6.0
+                signed_volume += volume
+                for axis in range(3):
+                    centroid_sum[axis] += volume * sum(
+                        vertex[axis] for vertex in vertices
+                    ) / 4.0
+
+            if abs(signed_volume) > 1e-6:
+                center = [value / signed_volume for value in centroid_sum]
+            else:
+                center = [
+                    (bounds_min[axis] + bounds_max[axis]) * 0.5
+                    for axis in range(3)
+                ]
+            source_size = max(
+                bounds_max[axis] - bounds_min[axis] for axis in range(3)
+            )
+            scale = cls.VEHICLE_MODEL_SIZE / source_size
+
+            # The model uses X for width, Y for height and Z for length.
+            # Flip X together with forward Z so the transform stays
+            # right-handed instead of mirroring the vehicle left-to-right.
+            triangles = []
+            for vertices in source:
+                transformed = [
+                    (
+                        -(vertex[0] - center[0]) * scale,
+                        (vertex[1] - center[1]) * scale,
+                        -(vertex[2] - center[2]) * scale,
+                    )
+                    for vertex in vertices
+                ]
+                a, b, c = transformed
+                edge_ab = tuple(b[i] - a[i] for i in range(3))
+                edge_ac = tuple(c[i] - a[i] for i in range(3))
+                normal = (
+                    edge_ab[1] * edge_ac[2] - edge_ab[2] * edge_ac[1],
+                    edge_ab[2] * edge_ac[0] - edge_ab[0] * edge_ac[2],
+                    edge_ab[0] * edge_ac[1] - edge_ab[1] * edge_ac[0],
+                )
+                length = math.sqrt(sum(value * value for value in normal))
+                if length > 1e-9:
+                    normal = tuple(value / length for value in normal)
+                triangles.append((normal, transformed))
+
+            # STL has no explicit topology. Rebuild shared edges and retain
+            # only open boundaries and hard creases, excluding triangulation
+            # diagonals and the small facets that form curved surfaces.
+            edge_map = {}
+            for normal, vertices in triangles:
+                for start, end in (
+                    (vertices[0], vertices[1]),
+                    (vertices[1], vertices[2]),
+                    (vertices[2], vertices[0]),
+                ):
+                    start_key = tuple(round(value, 5) for value in start)
+                    end_key = tuple(round(value, 5) for value in end)
+                    key = tuple(sorted((start_key, end_key)))
+                    entry = edge_map.setdefault(key, [start, end, []])
+                    entry[2].append(normal)
+
+            crease_cosine = math.cos(math.radians(24.0))
+            feature_edges = []
+            for start, end, normals in edge_map.values():
+                is_feature = len(normals) == 1
+                if not is_feature:
+                    for first in range(len(normals)):
+                        for second in range(first + 1, len(normals)):
+                            dot = sum(
+                                normals[first][axis] * normals[second][axis]
+                                for axis in range(3)
+                            )
+                            if dot < crease_cosine:
+                                is_feature = True
+                                break
+                        if is_feature:
+                            break
+                if is_feature:
+                    feature_edges.append((start, end))
+
+            front_z = -(bounds_max[2] - center[2]) * scale
+            return triangles, feature_edges, front_z
+        except Exception as exc:
+            print(f"Unable to load tCar.STL: {exc}")
+            return [], [], -0.6
+
+    def draw_vehicle_model(self):
+        """Draw the centered tCar mesh and its existing yellow front arrow."""
+        glPushMatrix()
+        glTranslatef(self.cube_x, self.cube_y, self.cube_z)
+        if self.has_quaternion:
+            glMultMatrixf(self._quat_to_gl_matrix(self.cube_quat))
+            self.cube_yaw = 0.0
+            self.cube_pitch = 0.0
+            self.cube_roll = 0.0
+        glRotatef(self.cube_yaw, 0, 1, 0)
+        glRotatef(self.cube_pitch, 1, 0, 0)
+        glRotatef(self.cube_roll, 0, 0, 1)
+
+        glColor3f(*self.vehicle_color)
+        glEnable(GL_POLYGON_OFFSET_FILL)
+        glPolygonOffset(1.0, 1.0)
+        if self.vehicle_display_list is not None:
+            glCallList(self.vehicle_display_list)
+        else:
+            self._draw_vehicle_triangles()
+        glDisable(GL_POLYGON_OFFSET_FILL)
+
+        glDisable(GL_LIGHTING)
+        glEnable(GL_LINE_SMOOTH)
+        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+        glColor4f(0.055, 0.06, 0.07, 0.88)
+        glLineWidth(1.15)
+        if self.vehicle_edge_display_list is not None:
+            glCallList(self.vehicle_edge_display_list)
+        else:
+            self._draw_vehicle_feature_edges()
+
+        arrow_base = self.vehicle_front_z - 0.16
+        arrow_tip = arrow_base - 0.34
+        glColor4f(1.0, 0.9, 0.0, 0.95)
+        glLineWidth(3.0)
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, self.vehicle_front_z)
+        glVertex3f(0, 0, arrow_base)
+        glEnd()
+        self._draw_cone(
+            (0, 0, arrow_tip), (0, 0, arrow_base),
+            (1, 0, 0), (0, 1, 0), 0.10,
+        )
+        glDisable(GL_LINE_SMOOTH)
+        glEnable(GL_LIGHTING)
+        glPopMatrix()
+
+    def _draw_vehicle_triangles(self):
+        glBegin(GL_TRIANGLES)
+        for normal, vertices in self.vehicle_triangles:
+            glNormal3f(*normal)
+            for vertex in vertices:
+                glVertex3f(*vertex)
+        glEnd()
+
+    def _compile_vehicle_display_list(self):
+        if not self.vehicle_triangles:
+            return
+        display_list = glGenLists(1)
+        if not display_list:
+            return
+        glNewList(display_list, GL_COMPILE)
+        self._draw_vehicle_triangles()
+        glEndList()
+        self.vehicle_display_list = display_list
+
+        if self.vehicle_feature_edges:
+            edge_display_list = glGenLists(1)
+            if edge_display_list:
+                glNewList(edge_display_list, GL_COMPILE)
+                self._draw_vehicle_feature_edges()
+                glEndList()
+                self.vehicle_edge_display_list = edge_display_list
+
+    def _draw_vehicle_feature_edges(self):
+        glBegin(GL_LINES)
+        for start, end in self.vehicle_feature_edges:
+            glVertex3f(*start)
+            glVertex3f(*end)
         glEnd()
 
     def draw_grid_with_axes(self):

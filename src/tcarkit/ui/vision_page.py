@@ -413,7 +413,7 @@ class VisionPage(QWidget):
         painter.drawEllipse(center, radius, radius)
         if not self.gyro_ready:
             return
-        heading = self._display_heading()
+        heading = self._camera_heading()
         angle = math.radians(heading - 90.0)
         cone_length = size * 0.28
         half_fov = math.radians(24.0)
