@@ -2,6 +2,7 @@ import os
 import sys
 sys.path.append('/home/pi/TurboPi/')
 import time
+import threading
 import HiwonderSDK.Board as Board
 from smbus2 import SMBus, i2c_msg
 
@@ -34,6 +35,10 @@ class Sonar:
         self.i2c = 1
         self.Pixels = [0,0]
         self.RGBMode = 0
+        # Every distance/RGB operation targets the same stateful I2C device.
+        # Keep multi-register transactions together when telemetry, gameplay,
+        # and RPC requests arrive from different threads.
+        self._lock = threading.RLock()
 
     def __getattr(self, attr):
         if attr in self.__units:
@@ -45,8 +50,10 @@ class Sonar:
 
     def setRGBMode(self, mode):
         try:
-            with SMBus(self.i2c) as bus:
-                bus.write_byte_data(self.i2c_addr, self.__RGB_MODE, mode)
+            with self._lock:
+                with SMBus(self.i2c) as bus:
+                    bus.write_byte_data(self.i2c_addr, self.__RGB_MODE, mode)
+                self.RGBMode = mode
         except BaseException as e:
             print(e)
 
@@ -61,10 +68,11 @@ class Sonar:
             if index != 0 and index != 1:
                 return 
             start_reg = 3 if index == 0 else 6
-            with SMBus(self.i2c) as bus:
-                bus.write_byte_data(self.i2c_addr, start_reg, 0xFF & (rgb >> 16))
-                bus.write_byte_data(self.i2c_addr, start_reg+1, 0xFF & (rgb >> 8))
-                bus.write_byte_data(self.i2c_addr, start_reg+2, 0xFF & rgb)
+            with self._lock:
+                with SMBus(self.i2c) as bus:
+                    bus.write_byte_data(self.i2c_addr, start_reg, 0xFF & (rgb >> 16))
+                    bus.write_byte_data(self.i2c_addr, start_reg+1, 0xFF & (rgb >> 8))
+                    bus.write_byte_data(self.i2c_addr, start_reg+2, 0xFF & rgb)
                 self.Pixels[index] = rgb
         except BaseException as e:
             print(e)
@@ -84,28 +92,38 @@ class Sonar:
                 return
             start_reg = 9 if index == 0 else 12
             cycle = int(cycle / 100)
-            with SMBus(self.i2c) as bus:
-                bus.write_byte_data(self.i2c_addr, start_reg + rgb, cycle)
+            with self._lock:
+                with SMBus(self.i2c) as bus:
+                    bus.write_byte_data(self.i2c_addr, start_reg + rgb, cycle)
         except BaseException as e:
             print(e)
 
     def startSymphony(self):
-        self.setRGBMode(1)
-        self.setBreathCycle(1,0, 2000)
-        self.setBreathCycle(1,1, 3300)
-        self.setBreathCycle(1,2, 4700)
-        self.setBreathCycle(2,0, 4600)
-        self.setBreathCycle(2,1, 2000)
-        self.setBreathCycle(2,2, 3400)
+        with self._lock:
+            self.setRGBMode(1)
+            self.setBreathCycle(1,0, 2000)
+            self.setBreathCycle(1,1, 3300)
+            self.setBreathCycle(1,2, 4700)
+            self.setBreathCycle(0,0, 4600)
+            self.setBreathCycle(0,1, 2000)
+            self.setBreathCycle(0,2, 3400)
+
+    def resetLights(self):
+        """Return both sonar LEDs to a stable, off, non-breathing state."""
+        with self._lock:
+            self.setRGBMode(0)
+            self.setPixelColor(0, Board.PixelColor(0, 0, 0))
+            self.setPixelColor(1, Board.PixelColor(0, 0, 0))
 
     def getDistance(self):
         dist = 99999
         try:
-            with SMBus(self.i2c) as bus:
-                msg = i2c_msg.write(self.i2c_addr, [0,])
-                bus.i2c_rdwr(msg)
-                read = i2c_msg.read(self.i2c_addr, 2)
-                bus.i2c_rdwr(read)
+            with self._lock:
+                with SMBus(self.i2c) as bus:
+                    msg = i2c_msg.write(self.i2c_addr, [0,])
+                    bus.i2c_rdwr(msg)
+                    read = i2c_msg.read(self.i2c_addr, 2)
+                    bus.i2c_rdwr(read)
                 dist = int.from_bytes(bytes(list(read)), byteorder='little', signed=False)
                 if dist > 5000:
                     dist = 5000
@@ -136,4 +154,3 @@ if __name__ == '__main__':
     while True:
         time.sleep(1)
         print(s.getDistance())
-

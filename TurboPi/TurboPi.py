@@ -125,15 +125,20 @@ def startTruckPi():
     
     BZ.init()
 
-    TCAR_SERVICE = tCar.TCarService()
+    # Share the one sonar object with tCar telemetry.  Creating a second
+    # object caused concurrent stateful transactions against I2C address 0x77.
+    TCAR_SERVICE = tCar.TCarService(sonar=HWSONAR)
     TCAR_SERVICE.start()
 
     previous_time = 0.00
-    # 超声波开启后默认关闭灯
-    HWSONAR.setRGBMode(0)
-    HWSONAR.setPixelColor(0, Board.PixelColor(0,0,0))
-    HWSONAR.setPixelColor(1, Board.PixelColor(0,0,0))    
-    HWSONAR.show()
+    # 超声波开启后默认关闭灯，使用共享实例的原子复位。
+    if hasattr(HWSONAR, 'resetLights'):
+        HWSONAR.resetLights()
+    else:
+        HWSONAR.setRGBMode(0)
+        HWSONAR.setPixelColor(0, Board.PixelColor(0,0,0))
+        HWSONAR.setPixelColor(1, Board.PixelColor(0,0,0))
+        HWSONAR.show()
     
     # 玩法调用的超声波
     RemoteControl.HWSONAR = HWSONAR

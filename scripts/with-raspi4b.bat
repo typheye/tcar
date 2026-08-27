@@ -35,7 +35,7 @@ goto show_help
 
 :update_restart
 echo [1/2] Uploading files to Raspberry Pi...
-scp -r "%BASE_DIR%\TurboPi" pi@%IP%:%TARGET_DIR%
+tar --exclude=__pycache__ --exclude=*.pyc -C "%BASE_DIR%" -cf - TurboPi | ssh pi@%IP% "tar -xf - -C %TARGET_DIR%"
 if !errorlevel! neq 0 (
   echo [ERROR] Upload failed!
   exit /b 1

@@ -9,6 +9,7 @@ import sys
 import json
 import socket
 import signal
+import threading
 
 sys.path.append('/home/pi/TurboPi/')
 import Utils.buzzer as BZ
@@ -22,6 +23,7 @@ key_map = {"PSB_Y": 0, "PSB_B": 1, "PSB_A": 2, "PSB_X": 3,
 
 # Socket通信配置
 SOCKET_PATH = "/tmp/servo_control.sock"
+SENSOR_SERVER_ADDRESS = ("192.168.66.3", 8888)
 
 # 全局运行标志
 RUNNING = True
@@ -122,7 +124,7 @@ class ChassisController:
         except Exception as e:
             print(f"小车控制错误: {e}")
     
-    def turn(self, direction):
+    def turn(self, direction, yaw_rate=0.3):
         """转向
         direction: 1=左转, -1=右转
         """
@@ -131,7 +133,7 @@ class ChassisController:
             return
         
         # 转向
-        yaw_rate = -0.3 if direction == 1 else 0.3
+        yaw_rate = -abs(yaw_rate) if direction == 1 else abs(yaw_rate)
         try:
             self.chassis.set_velocity(0, 0, yaw_rate)
         except Exception as e:
@@ -283,6 +285,10 @@ class PS2Controller:
         # 按钮状态
         self.l1_pressed = False
         self.r1_pressed = False
+        self.calibration_combo_active = False
+        self.calibration_combo_since = None
+        self.calibration_combo_cooldown_until = 0.0
+        self.calibration_monitor = None
         
         # 导入math模块用于角度计算
         import math
@@ -331,6 +337,91 @@ class PS2Controller:
         except:
             pass
         return False
+
+    def request_full_sensor_calibration(self):
+        """Request full gyro/DMP/magnetometer calibration from tCar service."""
+        if self.calibration_monitor and self.calibration_monitor.is_alive():
+            print("传感器校准已在进行")
+            return
+        self.chassis_ctrl.stop()
+        self.target_speed = {1: 0, 2: 0}
+        self.current_speed = {1: 0, 2: 0}
+        self.calibration_monitor = threading.Thread(
+            target=self._monitor_sensor_calibration,
+            name="sensor-calibration-monitor",
+            daemon=True,
+        )
+        self.calibration_monitor.start()
+
+    def _sensor_command(self, command, timeout=1.0):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        try:
+            sock.sendto(command, SENSOR_SERVER_ADDRESS)
+            reply, _ = sock.recvfrom(256)
+            return reply.decode("utf-8", errors="replace")
+        finally:
+            sock.close()
+
+    def _monitor_sensor_calibration(self):
+        auto_turning = False
+        turn_rate = None
+        try:
+            reply = self._sensor_command(b"calibrate_all")
+            print(f"传感器校准请求: {reply}")
+            if not reply.startswith(("started:", "busy:")):
+                raise RuntimeError(reply)
+            if reply.startswith("started:"):
+                BZ.calibration_started()
+            last_phase = None
+            while RUNNING:
+                status = self._sensor_command(b"calibration_status")
+                phase = status.split(":", 1)[0]
+                progress = None
+                if phase == "magnetometer" and ":" in status:
+                    try:
+                        progress = float(status.split(":", 1)[1])
+                    except ValueError:
+                        pass
+                if phase != last_phase:
+                    print(f"传感器校准阶段: {status}")
+                    if phase == "magnetometer":
+                        # tCar integrates the calibrated Z gyro and ends this
+                        # phase after one real 360-degree rotation.
+                        turn_rate = 0.30
+                        self.chassis_ctrl.turn(1, turn_rate)
+                        auto_turning = True
+                    elif auto_turning:
+                        self.chassis_ctrl.stop()
+                        auto_turning = False
+                    last_phase = phase
+                if auto_turning and progress is not None:
+                    if progress >= 352.0:
+                        desired_rate = 0.08
+                    elif progress >= 330.0:
+                        desired_rate = 0.14
+                    elif progress >= 285.0:
+                        desired_rate = 0.22
+                    else:
+                        desired_rate = 0.30
+                    if desired_rate != turn_rate:
+                        turn_rate = desired_rate
+                        self.chassis_ctrl.turn(1, turn_rate)
+                if phase == "complete":
+                    BZ.calibration_finished()
+                    return
+                if phase == "failed":
+                    BZ.init(0.5)
+                    return
+                # A short polling interval keeps final angular overshoot below
+                # the old quarter-second control lag.
+                time.sleep(0.05)
+        except Exception as exc:
+            print(f"传感器校准请求失败: {exc}")
+            BZ.init(0.5)
+        finally:
+            if auto_turning:
+                self.chassis_ctrl.stop()
     
     def update_smooth_speed(self):
         """更新舵机平滑速度"""
@@ -385,8 +476,36 @@ class PS2Controller:
     def process_buttons(self):
         """处理按钮输入"""
         try:
+            select_pressed = self.get_safe_button(key_map["PSB_SELECT"])
+            x_pressed = self.get_safe_button(key_map["PSB_X"])
+            now = time.monotonic()
+
+            # SELECT + X: full inertial and magnetometer recalibration.
+            if self.calibration_combo_active:
+                if not select_pressed and not x_pressed:
+                    self.calibration_combo_active = False
+                    self.calibration_combo_since = None
+                    self.calibration_combo_cooldown_until = now + 0.35
+                return
+            if select_pressed and x_pressed:
+                if now < self.calibration_combo_cooldown_until:
+                    return
+                if self.calibration_combo_since is None:
+                    self.calibration_combo_since = now
+                    return
+                # Both buttons must remain down for 120 ms.  This filters
+                # contact bounce and prevents a nearby single-X event.
+                if now - self.calibration_combo_since < 0.12:
+                    return
+                self.calibration_combo_active = True
+                self.calibration_combo_since = None
+                print("SELECT + X: 重新校准陀螺仪、姿态零点和磁力计")
+                self.request_full_sensor_calibration()
+                return
+            self.calibration_combo_since = None
+
             # SELECT + START 切换模式
-            if self.get_safe_button(key_map["PSB_SELECT"]):
+            if select_pressed:
                 time.sleep(0.01)
                 if self.get_safe_button(key_map["PSB_START"]):
                     self.shield = not self.shield
@@ -492,7 +611,7 @@ class PS2Controller:
                     time.sleep(0.01)
             
             # X - 使用边缘检测
-            if self.get_safe_button(key_map["PSB_X"]):
+            if x_pressed:
                 print("X按下")
                 BZ.keydown_PSControler()
                 # 等待按钮释放

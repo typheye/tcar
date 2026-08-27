@@ -80,14 +80,22 @@ class Magnetometer:
         try:
             with open(self.cal_file, "r") as f:
                 cfg = json.load(f)
+            if cfg.get("calibration_version") != 2 or float(cfg.get("turn_degrees", 0.0)) < 345.0:
+                raise ValueError("legacy/incomplete magnetometer calibration")
             self.offset = [float(v) for v in cfg.get("offset", self.offset)]
             self.scale = [float(v) for v in cfg.get("scale", self.scale)]
-            self.axis_map = list(self.COORDINATE_AXIS_MAP)
-            self.axis_sign = list(self.COORDINATE_AXIS_SIGN)
+            axis_map = cfg.get("axis_map", self.COORDINATE_AXIS_MAP)
+            axis_sign = cfg.get("axis_sign", self.COORDINATE_AXIS_SIGN)
+            if sorted(axis_map) != [0, 1, 2] or len(axis_sign) != 3:
+                raise ValueError("invalid magnetometer axis mapping")
+            self.axis_map = [int(v) for v in axis_map]
+            self.axis_sign = [float(v) for v in axis_sign]
             self.yaw_sign = float(cfg.get("yaw_sign", self.yaw_sign))
             self.declination = float(cfg.get("declination", self.declination))
             self.weight = min(float(cfg.get("weight", self.weight)), self.weight)
             self.field_radius = float(cfg.get("field_radius", self.field_radius))
+            if cfg.get("calibrated") is not True:
+                raise ValueError("magnetometer calibration is marked invalid")
             if self._calibration_is_bad():
                 self.offset = [0.0, 0.0, 0.0]
                 self.scale = [1.0, 1.0, 1.0]
@@ -199,7 +207,10 @@ class Magnetometer:
         strength = math.sqrt(mx * mx + my * my)
         field_valid = self._field_is_valid(strength)
         if field_valid and not saturated and abs(mx) + abs(my) >= 1e-6:
-            heading = (math.degrees(math.atan2(my, mx)) + self.declination) % 360.0
+            # Field test: E/W are correct while N/S are mirrored.  Reflecting
+            # the first horizontal axis gives heading = 180 - heading, which
+            # preserves E/W and swaps the erroneous N/S pair.
+            heading = (math.degrees(math.atan2(my, -mx)) + self.declination) % 360.0
             rel_yaw = wrap_angle((heading - self.yaw_zero) * self.yaw_sign)
             if current_yaw is not None:
                 yaw_error = wrap_angle(rel_yaw - current_yaw)
@@ -228,7 +239,7 @@ class Magnetometer:
             return None
         if not self._field_is_valid(math.sqrt(mx * mx + my * my)):
             return None
-        heading = math.degrees(math.atan2(my, mx)) + self.declination
+        heading = math.degrees(math.atan2(my, -mx)) + self.declination
         self.last_heading = heading % 360.0
         return self.last_heading
 
@@ -256,15 +267,19 @@ class Magnetometer:
             return None
         return wrap_angle((heading - self.yaw_zero) * self.yaw_sign)
 
-    def calibrate_hard_soft_iron(self, seconds=30):
+    def calibrate_hard_soft_iron(self, seconds=30, yaw_rate_reader=None, progress_callback=None):
         if not self.available:
             print("Mag calibration failed: magnetometer not found")
             return False
-        print(f"Rotate the whole car slowly for {seconds} seconds...")
-        mins = [float("inf"), float("inf"), float("inf")]
-        maxs = [float("-inf"), float("-inf"), float("-inf")]
+        # Never expose the previous known-bad NSEW result while collecting a
+        # replacement.  It becomes valid again only after full coverage.
+        self.calibrated = False
+        print(f"Rotate the complete car exactly one full 360-degree turn over {seconds} seconds...")
+        raw_samples = []
         count = 0
         saturated_count = 0
+        turned_degrees = 0.0
+        last_sample_time = time.monotonic()
         deadline = time.time() + seconds
         while time.time() < deadline:
             raw = self.read_raw()
@@ -273,11 +288,22 @@ class Magnetometer:
                     saturated_count += 1
                     time.sleep(0.03)
                     continue
-                mapped = [raw[self.axis_map[i]] * self.axis_sign[i] for i in range(3)]
-                for i in range(3):
-                    mins[i] = min(mins[i], mapped[i])
-                    maxs[i] = max(maxs[i], mapped[i])
+                raw_samples.append(list(raw))
                 count += 1
+            now = time.monotonic()
+            dt = min(0.1, now - last_sample_time)
+            last_sample_time = now
+            if yaw_rate_reader is not None:
+                yaw_rate = abs(float(yaw_rate_reader()))
+                if yaw_rate >= 3.0:
+                    turned_degrees += yaw_rate * dt
+                if progress_callback:
+                    progress_callback(min(turned_degrees, 360.0))
+                # The controller slows progressively near the origin.  Stop
+                # the integration just before 360 so motor response and the
+                # remaining wheel inertia settle at the original heading.
+                if turned_degrees >= 358.0:
+                    break
             time.sleep(0.03)
         if count < 20:
             print(f"Mag calibration failed: too few valid samples, saturated={saturated_count}")
@@ -285,9 +311,29 @@ class Magnetometer:
         if saturated_count > count * 0.2:
             print(f"Mag calibration failed: too many saturated samples, valid={count}, saturated={saturated_count}")
             return False
+        if yaw_rate_reader is not None and turned_degrees < 350.0:
+            print(f"Mag calibration failed: car only turned {turned_degrees:.1f} degrees")
+            return False
+        raw_mins = [min(sample[i] for sample in raw_samples) for i in range(3)]
+        raw_maxs = [max(sample[i] for sample in raw_samples) for i in range(3)]
+        raw_radii = [(raw_maxs[i] - raw_mins[i]) * 0.5 for i in range(3)]
+        # The board may be mounted upside-down or on its edge.  A level car
+        # rotation reveals the two axes that actually span the horizontal
+        # magnetic plane; choose them from measured coverage instead of a
+        # guessed PCB orientation.
+        heading_axes = sorted(range(3), key=lambda i: raw_radii[i], reverse=True)[:2]
+        vertical_axis = next(i for i in range(3) if i not in heading_axes)
+        self.axis_map = [heading_axes[0], heading_axes[1], vertical_axis]
+        self.axis_sign = list(self.COORDINATE_AXIS_SIGN)
+        mapped_samples = [
+            [sample[self.axis_map[i]] * self.axis_sign[i] for i in range(3)]
+            for sample in raw_samples
+        ]
+        mins = [min(sample[i] for sample in mapped_samples) for i in range(3)]
+        maxs = [max(sample[i] for sample in mapped_samples) for i in range(3)]
         radii = [(maxs[i] - mins[i]) * 0.5 for i in range(3)]
-        if radii[0] < 20.0 or radii[1] < 20.0:
-            print(f"Mag calibration failed: x/y radius too small {radii}")
+        if radii[0] < 35.0 or radii[1] < 35.0 or min(radii[:2]) / max(radii[:2]) < 0.20:
+            print(f"Mag calibration failed: insufficient horizontal coverage {radii}")
             return False
         avg_radius = (radii[0] + radii[1]) * 0.5
         self.field_radius = avg_radius
@@ -298,6 +344,7 @@ class Magnetometer:
             1.0,
         ]
         cfg = {
+            "calibration_version": 2,
             "kind": self.kind,
             "address": self.address,
             "offset": self.offset,
@@ -308,6 +355,7 @@ class Magnetometer:
             "declination": self.declination,
             "weight": self.weight,
             "field_radius": self.field_radius,
+            "turn_degrees": turned_degrees,
             "calibrated": True,
         }
         with open(self.cal_file, "w") as f:
@@ -317,6 +365,8 @@ class Magnetometer:
         print(f"  offset: {self.offset}")
         print(f"  scale:  {self.scale}")
         print(f"  field_radius: {self.field_radius:.1f}")
+        print(f"  auto axis_map: {self.axis_map}, axis_sign: {self.axis_sign}")
+        print(f"  gyro turn: {turned_degrees:.1f} deg")
         self.calibrated = True
         return True
 
@@ -859,6 +909,53 @@ class MPU6050:
             if self.mag.zero_yaw():
                 self.mag_yaw_correction = 0.0
 
+    def read_yaw_rate_dps(self):
+        """Return calibrated Z-axis turn rate for closed-loop car rotation."""
+        data = self._read_word_array(0x43, 6)
+        if len(data) < 6:
+            return 0.0
+        value = (data[4] << 8) | data[5]
+        if value >= 0x8000:
+            value -= 0x10000
+        return ((value - self.gyro_offset[2]) / 16.4) * self.gyro_yaw_scale
+
+    def recalibrate_all(self, mag_seconds=30, phase_callback=None):
+        """Recalibrate inertial zero/bias and the complete-car magnetometer.
+
+        This is the public runtime calibration interface used by the gamepad
+        shortcut and may also be called by future RPC/UI integrations.
+        """
+        notify = phase_callback or (lambda phase: None)
+        notify("gyro")
+        self.use_dmp = False
+        self.last_dmp_attitude = None
+        self._init_mpu6050()
+        self.calibrate_gyro(samples=400)
+        self.estimator = AttitudeEstimator(sample_freq=100)
+        self.calibrate_attitude_zero(samples=100)
+        self._init_dmp()
+
+        notify("magnetometer")
+        if not self.mag.calibrate_hard_soft_iron(
+            seconds=mag_seconds,
+            yaw_rate_reader=self.read_yaw_rate_dps,
+            progress_callback=lambda degrees: notify(f"magnetometer:{degrees:.0f}"),
+        ):
+            raise RuntimeError("magnetometer calibration failed")
+
+        # Tell the controller to stop first, then allow the chassis to settle
+        # before taking the new DMP/software zero.
+        notify("stopping")
+        time.sleep(0.75)
+        notify("finalizing")
+        if self.use_dmp:
+            self.calibrate_dmp_zero(samples=80)
+        else:
+            self.estimator.calibrate_zero(samples=0)
+        self.last_mag_debug = None
+        notify("complete")
+        return True
+
     def _fuse_mag_yaw(self, pitch, roll, yaw, qw, qx, qy, qz, gz_dps=0.0):
         # The magnetometer is diagnostic-only.  Feeding its noisy heading back
         # into the attitude quaternion causes apparent motion/drift in the
@@ -1116,7 +1213,10 @@ class MPU6050:
 
 # ============ UDP闂佸搫鐗嗙粔瀛樻叏閻旂厧闂?============
 class SensorServer:
-    def __init__(self, ip='192.168.66.3', port=8888):
+    CALIBRATE_ALL_COMMAND = b'calibrate_all'
+    CALIBRATION_STATUS_COMMAND = b'calibration_status'
+
+    def __init__(self, ip='192.168.66.3', port=8888, sonar=None):
         self.ip = ip
         self.port = port
         self.running = True
@@ -1132,16 +1232,80 @@ class SensorServer:
                 f"UDP {ip}:{port} is already in use; stop the existing smpu.py instance"
             ) from exc
         self.sock.settimeout(0.1)
+        self.sensor_lock = threading.Lock()
+        self.calibration_lock = threading.Lock()
+        self.calibration_status = "idle"
+        self.last_packet = None
+        self.last_distance = 5000.0
+        self.sonar_thread = None
 
         try:
             self.mpu = MPU6050()
-            self.sonar = Sonar()
+            self.sonar = sonar or Sonar()
         except Exception:
             self.sock.close()
             raise
+        self.sonar_thread = threading.Thread(
+            target=self._sample_sonar,
+            name="tcar-sonar",
+            daemon=True,
+        )
+        self.sonar_thread.start()
         
         print(f"\nServer started: {ip}:{port}")
         print("Sending attitude, quaternion, accel, gyro, and sonar distance")
+
+    def _sample_sonar(self):
+        """Sample the slow sonar independently so UDP attitude never queues."""
+        while self.running:
+            if self.calibration_lock.locked():
+                time.sleep(0.05)
+                continue
+            try:
+                with self.sensor_lock:
+                    self.last_distance = float(self.sonar.getDistance())
+            except Exception as exc:
+                print(f"Sonar background read failed: {exc}")
+            time.sleep(0.15)
+
+    def request_full_calibration(self, mag_seconds=30):
+        """Start one asynchronous full calibration, returning its state."""
+        if not self.calibration_lock.acquire(False):
+            return False, self.calibration_status
+        self.calibration_status = "starting"
+        thread = threading.Thread(
+            target=self._run_full_calibration,
+            args=(mag_seconds,),
+            name="tcar-calibration",
+            daemon=True,
+        )
+        thread.start()
+        return True, self.calibration_status
+
+    def _run_full_calibration(self, mag_seconds):
+        try:
+            with self.sensor_lock:
+                self.mpu.recalibrate_all(
+                    mag_seconds=mag_seconds,
+                    phase_callback=self._set_calibration_status,
+                )
+        except Exception as exc:
+            self.calibration_status = f"failed:{exc}"
+            print(f"Full sensor calibration failed: {exc}")
+        finally:
+            # Calibration exercises the shared I2C bus heavily.  Restore the
+            # illuminated sonar to a deterministic non-breathing state.
+            reset_lights = getattr(self.sonar, "resetLights", None)
+            if reset_lights:
+                try:
+                    reset_lights()
+                except Exception as exc:
+                    print(f"Sonar RGB reset failed: {exc}")
+            self.calibration_lock.release()
+
+    def _set_calibration_status(self, status):
+        self.calibration_status = status
+        print(f"Calibration phase: {status}")
 
     def run(self):
         last_time = time.time()
@@ -1157,16 +1321,36 @@ class SensorServer:
                 except socket.timeout:
                     continue
 
+                if data == self.CALIBRATE_ALL_COMMAND:
+                    started, status = self.request_full_calibration()
+                    reply = f"{'started' if started else 'busy'}:{status}".encode()
+                    self.sock.sendto(reply, addr)
+                    continue
+
+                if data == self.CALIBRATION_STATUS_COMMAND:
+                    self.sock.sendto(self.calibration_status.encode(), addr)
+                    continue
+
                 if data == b'get_data':
-                    pitch, roll, yaw, qw, qx, qy, qz, ax, ay, az, gx, gy, gz = self.mpu.get_angles()
-                    distance = self.sonar.getDistance()
-                    mag_yaw = float("nan")
-                    if self.mpu.last_mag_debug:
-                        mag_yaw = self.mpu.last_mag_debug.get("heading")
-                        if mag_yaw is None:
-                            mag_yaw = float("nan")
+                    if not self.sensor_lock.acquire(False):
+                        # Keep desktop clients alive during calibration.  The
+                        # attitude freezes at the last valid sample until the
+                        # sensors are ready again.
+                        if self.last_packet is not None:
+                            self.sock.sendto(self.last_packet, addr)
+                        continue
+                    try:
+                        pitch, roll, yaw, qw, qx, qy, qz, ax, ay, az, gx, gy, gz = self.mpu.get_angles()
+                        distance = self.last_distance
+                        mag_yaw = float("nan")
+                        if self.mpu.last_mag_debug:
+                            mag_yaw = self.mpu.last_mag_debug.get("heading")
+                            if mag_yaw is None:
+                                mag_yaw = float("nan")
+                    finally:
+                        self.sensor_lock.release()
                     
-                    data = struct.pack('!15f',
+                    packet = struct.pack('!15f',
                         pitch, roll, yaw,
                         qw, qx, qy, qz,
                         ax, ay, az,
@@ -1174,7 +1358,8 @@ class SensorServer:
                         float(distance),
                         float(mag_yaw)
                     )
-                    self.sock.sendto(data, addr)
+                    self.last_packet = packet
+                    self.sock.sendto(packet, addr)
                     
                     frame_count += 1
                     if frame_count % 10 == 0:
@@ -1198,21 +1383,24 @@ class SensorServer:
             self.sock.close()
         except OSError:
             pass
+        if self.sonar_thread and self.sonar_thread.is_alive():
+            self.sonar_thread.join(timeout=1.0)
 
 
 class TCarService:
     """Lifecycle wrapper used by TurboPi.py."""
 
-    def __init__(self, ip='192.168.66.3', port=8888):
+    def __init__(self, ip='192.168.66.3', port=8888, sonar=None):
         self.ip = ip
         self.port = port
+        self.sonar = sonar
         self.server = None
         self.thread = None
 
     def start(self):
         if self.thread and self.thread.is_alive():
             return
-        self.server = SensorServer(self.ip, self.port)
+        self.server = SensorServer(self.ip, self.port, sonar=self.sonar)
         self.thread = threading.Thread(target=self.server.run, name='tcar-sensor', daemon=True)
         self.thread.start()
 
