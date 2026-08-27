@@ -32,6 +32,9 @@ class VisionPage(QWidget):
         self.mag_sync_started = None
         self.mag_last_sample_time = None
         self.mag_last_sync_time = None
+        self.camera_pan_angle = 0.0
+        self.camera_pan_target = 0.0
+        self.camera_pan_ready = False
         self.last_inertial_yaw = None
         self.calibration_active = False
         self.battery_voltage = 0.0
@@ -101,9 +104,10 @@ class VisionPage(QWidget):
             return
         # 4B publishes clockwise compass heading separately from the
         # counter-clockwise attitude yaw used by Home's quaternion scene.
-        if len(data) < 16:
+        if len(data) < 17:
             return
         yaw = data[15]
+        camera_pan = data[16]
         mag = data[14] if len(data) >= 15 else float("nan")
         if not math.isfinite(yaw):
             return
@@ -123,6 +127,12 @@ class VisionPage(QWidget):
             self.gyro_ready = True
         else:
             self.gyro_target = yaw
+        if math.isfinite(camera_pan):
+            camera_pan = max(-90.0, min(90.0, camera_pan))
+            if not self.camera_pan_ready:
+                self.camera_pan_angle = camera_pan
+                self.camera_pan_ready = True
+            self.camera_pan_target = camera_pan
 
         # The magnetometer periodically establishes absolute heading, but it
         # never directly animates the HUD. Between syncs, smooth inertial yaw
@@ -186,6 +196,9 @@ class VisionPage(QWidget):
         offset = self.heading_offset if self.heading_offset is not None else 0.0
         return (self.gyro_heading + offset) % 360.0
 
+    def _camera_heading(self):
+        return (self._display_heading() + self.camera_pan_angle) % 360.0
+
     def _mag_sync_is_valid(self, now=None):
         if self.mag_last_sync_time is None:
             return False
@@ -235,6 +248,11 @@ class VisionPage(QWidget):
             delta = (self.gyro_target - self.gyro_heading + 180.0) % 360.0 - 180.0
             if abs(delta) > 0.08:
                 self.gyro_heading = (self.gyro_heading + delta * 0.08) % 360.0
+                changed = True
+        if self.camera_pan_ready:
+            delta = self.camera_pan_target - self.camera_pan_angle
+            if abs(delta) > 0.03:
+                self.camera_pan_angle += delta * 0.12
                 changed = True
         self.hud_ticks += 1
         if self.hud_ticks >= 60:
@@ -287,7 +305,7 @@ class VisionPage(QWidget):
         painter.drawImage(QRectF(self.rect()), self.frame, source)
 
     def _draw_compass(self, painter):
-        heading = self._display_heading() if self.gyro_ready else 0.0
+        heading = self._camera_heading() if self.gyro_ready else self.camera_pan_angle
         center_x = self.width() / 2
         top = 0
         span = min(760, self.width() * 0.68)

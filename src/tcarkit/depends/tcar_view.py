@@ -54,7 +54,14 @@ class UDPReceiver(QThread):
                     try:
                         data, addr = self.sock.recvfrom(1024)
                         self.network_delay.emit((time.monotonic() - request_started) * 1000.0)
-                        if len(data) == 64:
+                        if len(data) == 68:
+                            values = list(struct.unpack('!17f', data))
+                            self.data_received.emit(values)
+                            if not self.connected:
+                                self.connected = True
+                                self.connection_status.emit(True)
+                                print("Connected")
+                        elif len(data) == 64:
                             values = list(struct.unpack('!16f', data))
                             self.data_received.emit(values)
                             if not self.connected:

@@ -179,7 +179,7 @@ class IPDialog(QDialog):
         try:
             sock.sendto(b"get_data", (ip, 8888))
             packet, _ = sock.recvfrom(1024)
-            if len(packet) not in (40, 56, 60, 64):
+            if len(packet) not in (40, 56, 60, 64, 68):
                 raise RuntimeError(f"Unexpected telemetry packet: {len(packet)} bytes")
             super().accept()
         except Exception as exc:
