@@ -281,6 +281,9 @@ class PS2Controller:
         self.calibration_combo_since = None
         self.calibration_combo_cooldown_until = 0.0
         self.calibration_monitor = None
+        self.route_combo_active = False
+        self.route_combo_since = None
+        self.route_combo_cooldown_until = 0.0
         
         # 导入math模块用于角度计算
         import math
@@ -470,7 +473,39 @@ class PS2Controller:
         try:
             select_pressed = self.get_safe_button(key_map["PSB_SELECT"])
             x_pressed = self.get_safe_button(key_map["PSB_X"])
+            y_pressed = self.get_safe_button(key_map["PSB_Y"])
             now = time.monotonic()
+
+            # SELECT + Y: pause/resume services directed at desktop clients.
+            if self.route_combo_active:
+                if not select_pressed and not y_pressed:
+                    self.route_combo_active = False
+                    self.route_combo_since = None
+                    self.route_combo_cooldown_until = now + 0.35
+                return
+            if select_pressed and y_pressed:
+                if now < self.route_combo_cooldown_until:
+                    return
+                if self.route_combo_since is None:
+                    self.route_combo_since = now
+                    return
+                if now - self.route_combo_since < 0.12:
+                    return
+                self.route_combo_active = True
+                self.route_combo_since = None
+                try:
+                    state = self._sensor_command(b"desktop_services_toggle")
+                    if state == "paused":
+                        print("SELECT + Y: 已暂停上位机路由服务")
+                        BZ.desktop_services_paused()
+                    elif state == "active":
+                        print("SELECT + Y: 已恢复上位机路由服务")
+                        BZ.desktop_services_resumed()
+                except Exception as exc:
+                    print(f"上位机路由服务切换失败: {exc}")
+                    BZ.init(0.08)
+                return
+            self.route_combo_since = None
 
             # SELECT + X: full inertial and magnetometer recalibration.
             if self.calibration_combo_active:

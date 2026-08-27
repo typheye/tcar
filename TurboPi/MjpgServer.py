@@ -12,6 +12,7 @@ if sys.version_info.major == 2:
     sys.exit(0)
 
 import cv2
+import numpy as np
 import time
 import queue
 import threading
@@ -23,8 +24,26 @@ from io import StringIO, BytesIO
 img_show = None
 jpg_show = None
 jpg_show_time = None
+img_sequence = 0
+jpg_sequence = 0
 frame_lock = threading.Lock()
-quality = (int(cv2.IMWRITE_JPEG_QUALITY), 78)
+frame_condition = threading.Condition(frame_lock)
+jpg_condition = threading.Condition()
+quality = (int(cv2.IMWRITE_JPEG_QUALITY), 74)
+paused_client_ips = set()
+
+
+def set_paused_clients(client_ips):
+    global paused_client_ips
+    paused_client_ips = set(client_ips)
+    with frame_condition:
+        frame_condition.notify_all()
+    with jpg_condition:
+        jpg_condition.notify_all()
+
+
+def _client_is_paused(client_ip):
+    return client_ip in paused_client_ips
 
 
 def _process_camera_frame(frame):
@@ -35,43 +54,49 @@ def _process_camera_frame(frame):
     means = small.reshape(-1, 3).mean(axis=0)
     target = max(1.0, float(means.mean()))
     gains = [max(0.88, min(1.12, target / max(1.0, float(v)))) for v in means]
-    balanced = cv2.merge([
-        cv2.convertScaleAbs(frame[:, :, index], alpha=gains[index])
-        for index in range(3)
-    ])
-
-    # Blend with the source to preserve scene colors. Full-frame HSV and
-    # Gaussian passes were intentionally removed: on the Pi they pushed one
-    # frame above 250 ms and caused visible video latency.
-    balanced = cv2.addWeighted(balanced, 0.72, frame, 0.28, 0)
-    return balanced
+    # Fold the old balance/source blend into one native OpenCV operation.
+    # This avoids three channel copies, a merge and a second full-frame pass.
+    effective = [0.72 * gain + 0.28 for gain in gains]
+    matrix = np.diag(effective).astype(np.float32)
+    return cv2.transform(frame, matrix)
 
 
 def set_frame(frame):
-    global img_show
+    global img_show, img_sequence
     if frame is not None:
-        with frame_lock:
+        with frame_condition:
+            if frame is img_show:
+                return
             img_show = frame
+            img_sequence += 1
+            frame_condition.notify()
 
 
 def _encode_frames():
-    global jpg_show, jpg_show_time
+    global jpg_show, jpg_show_time, jpg_sequence
+    encoded_input_sequence = 0
     while True:
-        with frame_lock:
+        with frame_condition:
+            frame_condition.wait_for(lambda: img_sequence > encoded_input_sequence)
             frame = img_show
-        if frame is not None:
-            # Vision uses the stream as a full-screen first-person view.
-            # Keep the camera's native frame instead of destroying detail.
-            processed = _process_camera_frame(frame)
-            ret, jpg = cv2.imencode('.jpg', processed, quality)
-            if ret:
+            encoded_input_sequence = img_sequence
+        # Keep the camera's native frame instead of destroying detail.
+        processed = _process_camera_frame(frame)
+        ret, jpg = cv2.imencode('.jpg', processed, quality)
+        if ret:
+            with jpg_condition:
                 jpg_show = jpg.tobytes()
                 jpg_show_time = time.time()
-        time.sleep(1.0 / 20.0)
+                jpg_sequence = encoded_input_sequence
+                jpg_condition.notify_all()
 
 class MJPG_Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        global jpg_show, jpg_show_time
+        global jpg_show, jpg_show_time, jpg_sequence
+        client_ip = self.client_address[0]
+        if _client_is_paused(client_ip):
+            self.send_error(503, 'Desktop services paused')
+            return
         if self.path == '/?action=snapshot':
             jpg_bytes = jpg_show
             if jpg_bytes is None:
@@ -88,19 +113,37 @@ class MJPG_Handler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
+            sent_sequence = 0
             while True:
                 try:
-                    jpg_bytes = jpg_show
-                    frame_time = jpg_show_time
-                    if jpg_bytes is not None:
-                        self.wfile.write(b'--frame\r\n')
-                        self.wfile.write(b'Content-Type: image/jpeg\r\n')
-                        if frame_time is not None:
-                            self.wfile.write(f'X-Frame-Time: {frame_time:.6f}\r\n'.encode())
-                        self.wfile.write(f'Content-Length: {len(jpg_bytes)}\r\n\r\n'.encode())
-                        self.wfile.write(jpg_bytes)
-                        self.wfile.write(b'\r\n')
-                    time.sleep(1.0 / 20.0)
+                    with jpg_condition:
+                        if _client_is_paused(client_ip):
+                            jpg_condition.wait_for(
+                                lambda: not _client_is_paused(client_ip),
+                                timeout=1.0,
+                            )
+                            continue
+                        jpg_condition.wait_for(
+                            lambda: (_client_is_paused(client_ip)
+                                     or jpg_sequence > sent_sequence),
+                            timeout=1.0,
+                        )
+                        if _client_is_paused(client_ip):
+                            continue
+                        if jpg_sequence <= sent_sequence:
+                            continue
+                        jpg_bytes = jpg_show
+                        frame_time = jpg_show_time
+                        sent_sequence = jpg_sequence
+                    self.wfile.write(b'--frame\r\n')
+                    self.wfile.write(b'Content-Type: image/jpeg\r\n')
+                    self.wfile.write(f'X-Frame-Sequence: {sent_sequence}\r\n'.encode())
+                    if frame_time is not None:
+                        self.wfile.write(f'X-Frame-Time: {frame_time:.6f}\r\n'.encode())
+                    self.wfile.write(f'Content-Length: {len(jpg_bytes)}\r\n\r\n'.encode())
+                    self.wfile.write(jpg_bytes)
+                    self.wfile.write(b'\r\n')
+                    self.wfile.flush()
                 except (BrokenPipeError, ConnectionResetError):
                     break
         else:

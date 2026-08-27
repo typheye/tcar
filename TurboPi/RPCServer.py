@@ -34,6 +34,12 @@ __RPC_E05 = "E05 - Not callable"
 
 HWSONAR = None
 QUEUE = None
+PAUSED_CLIENT_IPS = set()
+
+
+def setPausedClients(client_ips):
+    global PAUSED_CLIENT_IPS
+    PAUSED_CLIENT_IPS = set(client_ips)
 
 ColorDetect_.initMove()
 ColorDetect_.setBuzzer(0.3)
@@ -431,6 +437,8 @@ def HaveLABAdjust():
 
 @Request.application
 def application(request):
+    if request.remote_addr in PAUSED_CLIENT_IPS:
+        return Response('Desktop services paused', status=503, mimetype='text/plain')
     dispatcher["echo"] = lambda s: s
     dispatcher["add"] = lambda a, b: a + b
     response = JSONRPCResponseManager.handle(request.data, dispatcher)

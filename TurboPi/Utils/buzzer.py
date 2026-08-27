@@ -41,3 +41,15 @@ def calibration_finished():
         _pulse(0.5)
         time.sleep(0.2)
         _pulse(0.5)
+
+
+def desktop_services_paused():
+    with _sound_lock:
+        _pulse(0.5)
+
+
+def desktop_services_resumed():
+    with _sound_lock:
+        _pulse(0.1)
+        time.sleep(0.2)
+        _pulse(0.1)

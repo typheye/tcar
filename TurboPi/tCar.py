@@ -191,6 +191,15 @@ class Magnetometer:
         ratio = strength / self.field_radius
         return 0.55 <= ratio <= 1.8
 
+    def _heading_from_xy(self, mx, my):
+        """Map the upside-down 4B magnetometer to compass heading once.
+
+        Reflecting magnetic X swaps north/south while leaving east/west in
+        place.  This hardware mounting correction belongs only in the 4B
+        sensor layer; consumers must use the resulting heading as-is.
+        """
+        return (math.degrees(math.atan2(my, -mx)) + self.declination) % 360.0
+
     def diagnostic(self, current_yaw=None):
         if not self.available:
             return None
@@ -207,7 +216,7 @@ class Magnetometer:
         strength = math.sqrt(mx * mx + my * my)
         field_valid = self._field_is_valid(strength)
         if field_valid and not saturated and abs(mx) + abs(my) >= 1e-6:
-            heading = (math.degrees(math.atan2(my, mx)) + self.declination) % 360.0
+            heading = self._heading_from_xy(mx, my)
             rel_yaw = wrap_angle((heading - self.yaw_zero) * self.yaw_sign)
             if current_yaw is not None:
                 yaw_error = wrap_angle(rel_yaw - current_yaw)
@@ -236,8 +245,7 @@ class Magnetometer:
             return None
         if not self._field_is_valid(math.sqrt(mx * mx + my * my)):
             return None
-        heading = math.degrees(math.atan2(my, mx)) + self.declination
-        self.last_heading = heading % 360.0
+        self.last_heading = self._heading_from_xy(mx, my)
         return self.last_heading
 
     def zero_yaw(self, samples=40):
@@ -767,6 +775,7 @@ class MPU6050:
         self.dmp_prev_raw_yaw = None
         self.dmp_raw_yaw_unwrapped = 0.0
         self.dmp_corrected_yaw = 0.0
+        self.dmp_yaw_time = None
         
         self._init_mpu6050()
         self.calibrate_gyro()
@@ -900,6 +909,11 @@ class MPU6050:
         internal_q = self._quat_from_euler(-pitch, roll, -yaw)
         return [internal_q[0], internal_q[1], -internal_q[2], -internal_q[3]]
 
+    @staticmethod
+    def _vehicle_axis_quaternion(qw, qx, qy, qz):
+        """Convert sensor quaternion axes to tCar pitch/yaw/roll vehicle axes."""
+        return [qw, qy, qz, qx]
+
     def calibrate_mag_zero(self):
         if self.mag.available:
             print("Zeroing magnetometer yaw... keep current heading")
@@ -915,6 +929,11 @@ class MPU6050:
         if value >= 0x8000:
             value -= 0x10000
         return ((value - self.gyro_offset[2]) / 16.4) * self.gyro_yaw_scale
+
+    @staticmethod
+    def heading_from_attitude_yaw(yaw):
+        """Convert upside-down gyro attitude yaw to clockwise compass heading."""
+        return (-float(yaw)) % 360.0
 
     def recalibrate_all(self, mag_seconds=30, phase_callback=None):
         """Recalibrate inertial zero/bias and the complete-car magnetometer.
@@ -1069,22 +1088,23 @@ class MPU6050:
         self.dmp_prev_raw_yaw = None
         self.dmp_raw_yaw_unwrapped = 0.0
         self.dmp_corrected_yaw = 0.0
+        self.dmp_yaw_time = None
 
-    def _correct_dmp_yaw(self, raw_yaw, gz_dps):
-        """Keep a continuous DMP yaw and correct its gyro scale.
-
-        MPU6050 has no absolute yaw reference. Small DMP changes are therefore
-        frozen while the raw Z gyro says the car is stationary; moving deltas
-        remain independent from the magnetometer and use the calibrated scale.
-        """
-        if self.dmp_prev_raw_yaw is None:
+    def _correct_dmp_yaw(self, raw_yaw, gz_dps, now=None):
+        """Integrate calibrated Z gyro for yaw; DMP remains pitch/roll only."""
+        now = time.monotonic() if now is None else float(now)
+        if self.dmp_yaw_time is None:
+            self.dmp_yaw_time = now
             self.dmp_prev_raw_yaw = raw_yaw
             return 0.0
 
-        delta = wrap_angle(raw_yaw - self.dmp_prev_raw_yaw)
+        dt = max(0.0, min(0.1, now - self.dmp_yaw_time))
+        self.dmp_yaw_time = now
         self.dmp_prev_raw_yaw = raw_yaw
-        if abs(gz_dps) < 0.35 and abs(delta) < 0.5:
-            delta = 0.0
+        if abs(gz_dps) < 0.35:
+            gz_dps = 0.0
+        # This matches the output-axis sign used by the software estimator.
+        delta = -gz_dps * dt
         self.dmp_raw_yaw_unwrapped += delta
         self.dmp_corrected_yaw += delta * self.gyro_yaw_scale
         return wrap_angle(self.dmp_corrected_yaw)
@@ -1177,6 +1197,7 @@ class MPU6050:
                 yaw = self._correct_dmp_yaw(raw_yaw, gz / 16.4)
                 qw, qx, qy, qz = self._output_quat_from_angles(pitch, roll, yaw)
                 pitch, roll, yaw, qw, qx, qy, qz = self._fuse_mag_yaw(pitch, roll, yaw, qw, qx, qy, qz, gz / 16.4)
+                qw, qx, qy, qz = self._vehicle_axis_quaternion(qw, qx, qy, qz)
                 self.last_dmp_attitude = (pitch, roll, yaw, qw, qx, qy, qz)
                 return (pitch, roll, yaw, qw, qx, qy, qz, ax, ay, az, gx, gy, gz)
             if self.last_dmp_attitude:
@@ -1205,6 +1226,7 @@ class MPU6050:
         )
         qw, qx, qy, qz = out_q
         pitch, roll, yaw, qw, qx, qy, qz = self._fuse_mag_yaw(pitch, roll, yaw, qw, qx, qy, qz, gz_dps)
+        qw, qx, qy, qz = self._vehicle_axis_quaternion(qw, qx, qy, qz)
         return (pitch, roll, yaw, qw, qx, qy, qz, ax, ay, az, gx, gy, gz)
 
 
@@ -1212,8 +1234,11 @@ class MPU6050:
 class SensorServer:
     CALIBRATE_ALL_COMMAND = b'calibrate_all'
     CALIBRATION_STATUS_COMMAND = b'calibration_status'
+    PERFORMANCE_STATUS_COMMAND = b'performance_status'
+    DESKTOP_SERVICES_TOGGLE_COMMAND = b'desktop_services_toggle'
 
-    def __init__(self, ip='192.168.66.3', port=8888, sonar=None, battery_reader=None):
+    def __init__(self, ip='192.168.66.3', port=8888, sonar=None, battery_reader=None,
+                 desktop_services_callback=None):
         self.ip = ip
         self.port = port
         self.running = True
@@ -1236,6 +1261,11 @@ class SensorServer:
         self.battery_reader = battery_reader
         self.last_distance = 5000.0
         self.sonar_thread = None
+        self.performance_cpu_sample = None
+        self.desktop_services_callback = desktop_services_callback
+        self.desktop_services_paused = False
+        self.desktop_client_ips = set()
+        self.paused_client_ips = set()
 
         try:
             self.mpu = MPU6050()
@@ -1318,6 +1348,54 @@ class SensorServer:
         self.calibration_status = status
         print(f"Calibration phase: {status}")
 
+    def _read_performance_status(self):
+        """Read Raspberry Pi system metrics without an optional dependency."""
+        cpu_percent = 0.0
+        with open('/proc/stat', 'r') as stat_file:
+            fields = [int(value) for value in stat_file.readline().split()[1:]]
+        total = sum(fields)
+        idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
+        if self.performance_cpu_sample is not None:
+            previous_total, previous_idle = self.performance_cpu_sample
+            total_delta = total - previous_total
+            idle_delta = idle - previous_idle
+            if total_delta > 0:
+                cpu_percent = max(
+                    0.0, min(100.0, (1.0 - idle_delta / total_delta) * 100.0)
+                )
+        self.performance_cpu_sample = (total, idle)
+
+        memory = {}
+        with open('/proc/meminfo', 'r') as memory_file:
+            for line in memory_file:
+                key, value = line.split(':', 1)
+                memory[key] = int(value.strip().split()[0])
+        memory_total = max(1, memory.get('MemTotal', 1))
+        memory_available = memory.get('MemAvailable', memory.get('MemFree', 0))
+        memory_percent = max(
+            0.0, min(100.0, (memory_total - memory_available) / memory_total * 100.0)
+        )
+
+        network_bytes = 0
+        with open('/proc/net/dev', 'r') as network_file:
+            for line in network_file.readlines()[2:]:
+                interface, values = line.split(':', 1)
+                if interface.strip() == 'lo':
+                    continue
+                counters = values.split()
+                network_bytes += int(counters[0]) + int(counters[8])
+
+        uname = os.uname()
+        return {
+            'cpu': cpu_percent,
+            'cores': os.cpu_count() or 1,
+            'memory': memory_percent,
+            'network_bytes': network_bytes,
+            'hostname': uname.nodename,
+            'platform': f"{uname.sysname} {uname.release} {uname.machine}",
+            'python': sys.version.split()[0],
+        }
+
     def run(self):
         last_time = time.time()
         frame_count = 0
@@ -1332,6 +1410,34 @@ class SensorServer:
                 except socket.timeout:
                     continue
 
+                is_local = addr[0] in (self.ip, '127.0.0.1', '::1')
+                if not is_local:
+                    new_client = addr[0] not in self.desktop_client_ips
+                    self.desktop_client_ips.add(addr[0])
+                    if self.desktop_services_paused:
+                        self.paused_client_ips.add(addr[0])
+                        if new_client and self.desktop_services_callback:
+                            self.desktop_services_callback(set(self.paused_client_ips))
+
+                if data == self.DESKTOP_SERVICES_TOGGLE_COMMAND and is_local:
+                    self.desktop_services_paused = not self.desktop_services_paused
+                    self.paused_client_ips = (
+                        set(self.desktop_client_ips)
+                        if self.desktop_services_paused else set()
+                    )
+                    if self.desktop_services_callback:
+                        self.desktop_services_callback(set(self.paused_client_ips))
+                    state = 'paused' if self.desktop_services_paused else 'active'
+                    self.sock.sendto(state.encode(), addr)
+                    print(
+                        f"Desktop services {state}: "
+                        f"{sorted(self.paused_client_ips) if self.paused_client_ips else 'none'}"
+                    )
+                    continue
+
+                if addr[0] in self.paused_client_ips:
+                    continue
+
                 if data == self.CALIBRATE_ALL_COMMAND:
                     started, status = self.request_full_calibration()
                     reply = f"{'started' if started else 'busy'}:{status}".encode()
@@ -1340,6 +1446,16 @@ class SensorServer:
 
                 if data == self.CALIBRATION_STATUS_COMMAND:
                     self.sock.sendto(self.calibration_status.encode(), addr)
+                    continue
+
+                if data == self.PERFORMANCE_STATUS_COMMAND:
+                    try:
+                        payload = json.dumps(
+                            self._read_performance_status(), separators=(',', ':')
+                        ).encode()
+                        self.sock.sendto(payload, addr)
+                    except (OSError, ValueError) as exc:
+                        self.sock.sendto(json.dumps({'error': str(exc)}).encode(), addr)
                     continue
 
                 if data == b'battery_status':
@@ -1373,13 +1489,15 @@ class SensorServer:
                     finally:
                         self.sensor_lock.release()
                     
-                    packet = struct.pack('!15f',
+                    gyro_heading = self.mpu.heading_from_attitude_yaw(yaw)
+                    packet = struct.pack('!16f',
                         pitch, roll, yaw,
                         qw, qx, qy, qz,
                         ax, ay, az,
                         gx, gy, gz,
                         float(distance),
-                        float(mag_yaw)
+                        float(mag_yaw),
+                        float(gyro_heading)
                     )
                     self.last_packet = packet
                     self.sock.sendto(packet, addr)
@@ -1413,11 +1531,13 @@ class SensorServer:
 class TCarService:
     """Lifecycle wrapper used by TurboPi.py."""
 
-    def __init__(self, ip='192.168.66.3', port=8888, sonar=None, battery_reader=None):
+    def __init__(self, ip='192.168.66.3', port=8888, sonar=None, battery_reader=None,
+                 desktop_services_callback=None):
         self.ip = ip
         self.port = port
         self.sonar = sonar
         self.battery_reader = battery_reader
+        self.desktop_services_callback = desktop_services_callback
         self.server = None
         self.thread = None
 
@@ -1428,6 +1548,7 @@ class TCarService:
             self.ip, self.port,
             sonar=self.sonar,
             battery_reader=self.battery_reader,
+            desktop_services_callback=self.desktop_services_callback,
         )
         self.thread = threading.Thread(target=self.server.run, name='tcar-sensor', daemon=True)
         self.thread.start()
