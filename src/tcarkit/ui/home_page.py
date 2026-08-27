@@ -42,6 +42,7 @@ class HomePage(QWidget):
         self.receiver.connection_status.connect(
             lambda connected: self.status.setText("Connected" if connected else "Waiting")
         )
+        self.receiver.calibration_status.connect(self.update_calibration_status)
         self.receiver.start()
         self.camera = CameraReceiver(url=f"http://{ip}:8080/?action=stream", max_fps=15)
         self.camera.frame_received.connect(self.update_camera)
@@ -67,6 +68,29 @@ class HomePage(QWidget):
             self.camera_label.clear()
             self.camera_label.setText("Camera offline")
         self.camera_label.raise_()
+
+    def update_calibration_status(self, status):
+        phase = status.split(":", 1)[0]
+        labels = {
+            "starting": "Calibration: starting",
+            "gyro": "Calibration: keep still",
+            "magnetometer": "Calibration: rotate car 360 deg",
+            "stopping": "Calibration: stopping car",
+            "finalizing": "Calibration: finalizing",
+        }
+        if phase == "magnetometer" and ":" in status:
+            try:
+                degrees = max(0.0, min(360.0, float(status.split(":", 1)[1])))
+                self.status.setText(f"Calibration: rotating {degrees:.0f}/360 deg")
+                return
+            except ValueError:
+                pass
+        if phase in labels:
+            self.status.setText(labels[phase])
+        elif phase == "failed":
+            self.status.setText("Calibration failed")
+        elif phase in ("idle", "complete"):
+            self.status.setText("Connected")
 
     def set_theme(self, dark):
         self.view.set_dark_theme(dark)

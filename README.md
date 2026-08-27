@@ -2,7 +2,7 @@
 
 PyQt5 desktop monitor migrated from the JanPNP `win-pc` shell. Home embeds the
 TurboPi attitude 3D scene, UDP telemetry, and the MJPEG camera preview. The
-only additional tab is PC Info; the File menu contains navigation, theme, and
+only additional tab is Performance; the File menu contains navigation, theme, and
 exit actions.
 
 Run from this directory:

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Local PC information page using the JanPNP performance-page layout."""
+"""Local performance page using the JanPNP performance-page layout."""
 
 import platform
+import socket
+import threading
 import time
 from collections import deque
 
@@ -61,19 +63,28 @@ class PerformanceGraph(QGroupBox):
             axis.setTextPen(foreground)
 
 
-class PCInfoPage(QWidget):
-    def __init__(self, parent=None):
+class PerformancePage(QWidget):
+    def __init__(self, ip, parent=None):
         super().__init__(parent)
+        self.ip = ip
         self.started = time.time()
         self.history = 600
         self.timestamps = deque(maxlen=self.history)
         self.cpu_values = deque(maxlen=self.history)
         self.memory_values = deque(maxlen=self.history)
-        self.disk_values = deque(maxlen=self.history)
+        self.latency_values = deque(maxlen=self.history)
         self.network_values = deque(maxlen=self.history)
         counters = psutil.net_io_counters()
         self.last_network_bytes = counters.bytes_sent + counters.bytes_recv
         self.last_network_time = time.monotonic()
+        self.latency_lock = threading.Lock()
+        self.last_latency = None
+        self.latency_thread = threading.Thread(
+            target=self._latency_loop,
+            name="tcarkit-latency",
+            daemon=True,
+        )
+        self.latency_thread.start()
         self._build_ui()
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
@@ -86,12 +97,11 @@ class PCInfoPage(QWidget):
         root.setContentsMargins(10, 10, 10, 10)
 
         cards = QHBoxLayout()
-        self.uptime = MetricCard("Uptime")
         self.cpu = MetricCard("CPU", "%")
         self.memory = MetricCard("Memory", "%")
-        self.disk = MetricCard("Disk", "%")
+        self.latency = MetricCard("Latency", " ms")
         self.network = MetricCard("Network", " MB/s")
-        for card in (self.uptime, self.cpu, self.memory, self.disk, self.network):
+        for card in (self.latency, self.cpu, self.memory, self.network):
             cards.addWidget(card)
         root.addLayout(cards)
 
@@ -103,9 +113,9 @@ class PCInfoPage(QWidget):
         root.addLayout(first_row)
 
         second_row = QHBoxLayout()
-        self.disk_graph = PerformanceGraph("Disk (%)", "#fd5")
+        self.latency_graph = PerformanceGraph("Latency (ms)", "#fd5")
         self.network_graph = PerformanceGraph("Network (MB/s)", "#b8f")
-        second_row.addWidget(self.disk_graph)
+        second_row.addWidget(self.latency_graph)
         second_row.addWidget(self.network_graph)
         root.addLayout(second_row)
 
@@ -121,7 +131,8 @@ class PCInfoPage(QWidget):
         elapsed = time.time() - self.started
         cpu = psutil.cpu_percent()
         memory = psutil.virtual_memory().percent
-        disk = psutil.disk_usage("/").percent
+        with self.latency_lock:
+            latency = self.last_latency
         now = time.monotonic()
         counters = psutil.net_io_counters()
         total_bytes = counters.bytes_sent + counters.bytes_recv
@@ -130,28 +141,49 @@ class PCInfoPage(QWidget):
         self.last_network_bytes = total_bytes
         self.last_network_time = now
 
-        self.uptime.set_value(f"{elapsed / 3600:.1f}", "hours")
         self.cpu.set_value(f"{cpu:.1f}", f"{psutil.cpu_count()} logical cores")
         self.memory.set_value(f"{memory:.1f}")
-        self.disk.set_value(f"{disk:.1f}")
+        self.latency.set_value("--" if latency is None else f"{latency:.1f}")
         self.network.set_value(f"{network:.2f}")
 
         self.timestamps.append(elapsed)
         self.cpu_values.append(cpu)
         self.memory_values.append(memory)
-        self.disk_values.append(disk)
+        self.latency_values.append(float("nan") if latency is None else latency)
         self.network_values.append(network)
         timestamps = list(self.timestamps)
         self.cpu_graph.set_data(timestamps, list(self.cpu_values))
         self.memory_graph.set_data(timestamps, list(self.memory_values))
-        self.disk_graph.set_data(timestamps, list(self.disk_values))
+        self.latency_graph.set_data(timestamps, list(self.latency_values))
         self.network_graph.set_data(timestamps, list(self.network_values))
+
+    def _measure_latency(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.35)
+        started = time.perf_counter()
+        try:
+            sock.sendto(b"get_data", (self.ip, 8888))
+            packet, _ = sock.recvfrom(1024)
+            if len(packet) not in (40, 56, 60):
+                return None
+            return (time.perf_counter() - started) * 1000.0
+        except OSError:
+            return None
+        finally:
+            sock.close()
+
+    def _latency_loop(self):
+        while True:
+            latency = self._measure_latency()
+            with self.latency_lock:
+                self.last_latency = latency
+            time.sleep(1.0)
 
     def set_theme(self, dark):
         for graph in (
             self.cpu_graph,
             self.memory_graph,
-            self.disk_graph,
+            self.latency_graph,
             self.network_graph,
         ):
             graph.set_theme(dark)

@@ -22,6 +22,7 @@ from OpenGL.GLU import *
 class UDPReceiver(QThread):
     data_received = pyqtSignal(list)
     connection_status = pyqtSignal(bool)
+    calibration_status = pyqtSignal(str)
     
     def __init__(self, ip='192.168.66.3', port=8888):
         super().__init__()
@@ -30,6 +31,8 @@ class UDPReceiver(QThread):
         self.running = True
         self.connected = False
         self.sock = None
+        self.last_calibration_status = None
+        self.last_calibration_poll = 0.0
 
     def run(self):
         try:
@@ -63,6 +66,19 @@ class UDPReceiver(QThread):
                                 self.connected = True
                                 self.connection_status.emit(True)
                                 print("Connected")
+                        now = time.monotonic()
+                        if now - self.last_calibration_poll >= 0.25:
+                            self.last_calibration_poll = now
+                            self.sock.sendto(b'calibration_status', (self.ip, self.port))
+                            try:
+                                status_data, _ = self.sock.recvfrom(256)
+                                status = status_data.decode('utf-8', errors='replace')
+                                if status != self.last_calibration_status:
+                                    self.last_calibration_status = status
+                                    self.calibration_status.emit(status)
+                            except (socket.timeout, UnicodeDecodeError):
+                                pass
+                        self.msleep(20)
                     except socket.timeout:
                         if self.connected:
                             self.connected = False

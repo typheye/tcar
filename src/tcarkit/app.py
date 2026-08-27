@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
 )
 
 from tcarkit.ui.home_page import HomePage
-from tcarkit.ui.performance_page import PCInfoPage
+from tcarkit.ui.performance_page import PerformancePage
 
 
 THEME_SYSTEM = "system"
@@ -87,9 +87,9 @@ def apply_theme(app, mode):
         home = getattr(window, "home", None)
         if home:
             home.set_theme(dark)
-        pc_info = getattr(window, "pc_info", None)
-        if pc_info:
-            pc_info.set_theme(dark)
+        performance = getattr(window, "performance", None)
+        if performance:
+            performance.set_theme(dark)
     return dark
 
 
@@ -237,8 +237,8 @@ class TCarKitWindow(QMainWindow):
         self.setWindowIcon(QIcon(resource_path(os.path.join("assets", "favicon.ico"))))
         self.setMinimumSize(800, 500)
         self.home = HomePage(ip)
-        self.pc_info = PCInfoPage()
-        self._pages = {"PC Info": self.pc_info}
+        self.performance = PerformancePage(ip)
+        self._pages = {"Performance": self.performance}
         self._build_menus()
         self.tabs = QTabWidget()
         self.tabs.setTabBar(TabBar())
@@ -253,7 +253,7 @@ class TCarKitWindow(QMainWindow):
         self.tabs.tabBar().setTabButton(home_index, QTabBar.RightSide, None)
         self._restore_session()
         self.home.set_theme(_current_dark)
-        self.pc_info.set_theme(_current_dark)
+        self.performance.set_theme(_current_dark)
         self.showMaximized()
 
     def _install_tab_style(self):
@@ -290,10 +290,10 @@ class TCarKitWindow(QMainWindow):
     def _build_menus(self):
         file_menu = self.menuBar().addMenu("File(&F)")
         open_menu = file_menu.addMenu("Open(&O)")
-        pc_action = QAction("PC Info", self)
-        pc_action.setData("PC Info")
-        pc_action.triggered.connect(self._open_tab)
-        open_menu.addAction(pc_action)
+        performance_action = QAction("Performance", self)
+        performance_action.setData("Performance")
+        performance_action.triggered.connect(self._open_tab)
+        open_menu.addAction(performance_action)
         file_menu.addSeparator()
         theme_menu = file_menu.addMenu("Theme(&T)")
         self._theme_group = QActionGroup(self)
@@ -350,11 +350,11 @@ class TCarKitWindow(QMainWindow):
         names = self._settings.value("session/tabs", [])
         if isinstance(names, str):
             names = [names]
-        if "PC Info" in names and not any(
-            self.tabs.tabText(index) == "PC Info"
+        if "Performance" in names and not any(
+            self.tabs.tabText(index) == "Performance"
             for index in range(self.tabs.count())
         ):
-            index = self.tabs.addTab(self.pc_info, "PC Info")
+            index = self.tabs.addTab(self.performance, "Performance")
             self._add_close_button(index)
 
     def closeEvent(self, event):
