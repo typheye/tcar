@@ -48,11 +48,10 @@ class VisionPage(QWidget):
         self.debug_frame_delay = True
         self.debug_network_delay = False
 
-        # Camera frames may arrive at 30 FPS, but noisy telemetry is sampled
-        # into the HUD at a stable cadence so labels and indicators do not
-        # visibly twitch on every packet.
+        # Animate heading at display cadence while sensor targets and battery
+        # values remain filtered independently.
         self.hud_timer = QTimer(self)
-        self.hud_timer.setInterval(100)
+        self.hud_timer.setInterval(16)
         self.hud_timer.timeout.connect(self._advance_hud)
         self.hud_timer.start()
 
@@ -235,10 +234,10 @@ class VisionPage(QWidget):
         if self.gyro_ready:
             delta = (self.gyro_target - self.gyro_heading + 180.0) % 360.0 - 180.0
             if abs(delta) > 0.08:
-                self.gyro_heading = (self.gyro_heading + delta * 0.35) % 360.0
+                self.gyro_heading = (self.gyro_heading + delta * 0.08) % 360.0
                 changed = True
         self.hud_ticks += 1
-        if self.hud_ticks >= 10:
+        if self.hud_ticks >= 60:
             self.hud_ticks = 0
             if self.battery_samples:
                 samples = sorted(self.battery_samples)
@@ -292,33 +291,49 @@ class VisionPage(QWidget):
         center_x = self.width() / 2
         top = 0
         span = min(760, self.width() * 0.68)
-        for offset in range(-90, 91, 15):
-            angle = (heading + offset) % 360.0
-            x = center_x + offset / 180.0 * span
-            cardinal = self._cardinal(angle)
-            label = cardinal if cardinal else f"{int(round(angle / 15) * 15) % 360}"
-            major = cardinal is not None
-            selected = offset == 0
-            tick_start = top + 17
-            tick_end = top + (29 if major else 25)
-            text_rect = QRectF(x - 28, top + 31, 56, 22)
+        pixels_per_degree = span / 180.0
+        magnetic_labels = self._mag_sync_is_valid()
+        for bearing, offset in self._compass_bearings(heading):
+            x = center_x + offset * pixels_per_degree
+            normalized = int(bearing) % 360
+            major = normalized % 15 == 0
+            cardinal = (
+                self._cardinal(normalized)
+                if magnetic_labels else None
+            )
+            tick_start = top + 18
+            tick_end = top + (29 if major else 23)
             # Soft one-pixel shadow keeps white HUD text readable without a
             # gray strip obscuring the first-person view.
             painter.setPen(QPen(QColor(0, 0, 0, 115), 3))
             painter.drawLine(QPointF(x + 1, tick_start), QPointF(x + 1, tick_end))
-            if self.heading_offset is not None:
-                painter.setFont(QFont("Segoe UI", 11 if selected else 10, QFont.DemiBold))
-                painter.drawText(text_rect.translated(1, 1), Qt.AlignHCenter | Qt.AlignTop, label)
-            # Only the value selected by the yellow marker is bright white;
-            # peripheral bearings recede in soft gray to strengthen focus.
-            painter.setPen(
-                QPen(QColor(255, 255, 255, 255), 2.2)
-                if selected
-                else QPen(QColor(205, 208, 210, 175), 1.0)
-            )
+            painter.setPen(QPen(QColor(205, 208, 210, 175), 1.0))
             painter.drawLine(QPointF(x, tick_start), QPointF(x, tick_end))
-            if self.heading_offset is not None:
+            # Leave a clear focus lane below the fixed yellow marker. The
+            # peripheral world ticks continue sliding behind it smoothly.
+            if major and abs(offset) >= 7.0:
+                label = cardinal or str(normalized)
+                text_rect = QRectF(x - 28, top + 31, 56, 22)
+                painter.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
+                painter.setPen(QPen(QColor(0, 0, 0, 115), 3))
+                painter.drawText(
+                    text_rect.translated(1, 1), Qt.AlignHCenter | Qt.AlignTop, label
+                )
+                painter.setPen(QColor(205, 208, 210, 175))
                 painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop, label)
+
+        # The focus readout is exact rather than snapped to the nearest tick.
+        focus_label = str(int(round(heading)) % 360)
+        focus_rect = QRectF(center_x - 32, top + 31, 64, 23)
+        painter.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
+        painter.setPen(QPen(QColor(0, 0, 0, 125), 3))
+        painter.drawLine(QPointF(center_x + 1, top + 18), QPointF(center_x + 1, top + 30))
+        painter.drawText(
+            focus_rect.translated(1, 1), Qt.AlignHCenter | Qt.AlignTop, focus_label
+        )
+        painter.setPen(QPen(QColor(255, 255, 255, 255), 2.2))
+        painter.drawLine(QPointF(center_x, top + 17), QPointF(center_x, top + 30))
+        painter.drawText(focus_rect, Qt.AlignHCenter | Qt.AlignTop, focus_label)
         # Downward equilateral marker sits above the scale and never covers a
         # heading label.
         marker = QPainterPath(QPointF(center_x - 7, top + 1))
@@ -332,8 +347,19 @@ class VisionPage(QWidget):
     @staticmethod
     def _cardinal(angle):
         names = {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"}
-        nearest = int((angle + 2.5) // 5 * 5) % 360
-        return names.get(nearest)
+        return names.get(int(angle) % 360)
+
+    @staticmethod
+    def _compass_bearings(heading, half_range=90, step=5):
+        """Return fixed world ticks and their continuous offsets from center."""
+        start = math.floor((heading - half_range) / step) * step
+        end = heading + half_range
+        bearings = []
+        bearing = start
+        while bearing <= end:
+            bearings.append((bearing, bearing - heading))
+            bearing += step
+        return bearings
 
     def _draw_battery(self, painter):
         width = min(500, self.width() * 0.48)
@@ -455,7 +481,7 @@ class VisionPage(QWidget):
         self.receiver.set_active(active)
         self.camera.set_active(active)
         if active:
-            self.hud_timer.start(100)
+            self.hud_timer.start(16)
             self.frame_timer.start(16)
             self.update()
         else:
