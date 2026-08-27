@@ -52,7 +52,8 @@ class ChassisController:
         
         # 左摇杆控制
         self.last_Lxy = [0, 0]    # 左摇杆值
-        self.deadzone = 0.02      # only suppress electrical center noise
+        self.deadzone = 0.06      # suppress measured analog center noise
+        self.release_deadzone = 0.035
         self.min_speed = 26.0     # overcome mecanum static friction
         
     def map_joystick_to_velocity(self, value):
@@ -99,14 +100,17 @@ class ChassisController:
         
         yaw_rate = 0
         magnitude = min(1.0, math.hypot(left_x, left_y))
-        if magnitude <= self.deadzone:
-            linear_speed = 0
-            direction = 0
-        else:
-            linear_speed = self.map_joystick_to_velocity(magnitude)
-            # Preserve the full two-axis vector.  The old dominant-axis branch
-            # snapped diagonal input to four directions and produced drifting.
-            direction = math.degrees(math.atan2(-left_y, left_x)) % 360.0
+        threshold = self.release_deadzone if self.move_active else self.deadzone
+        if magnitude <= threshold:
+            if self.move_active:
+                self.stop()
+            return
+
+        self.move_active = True
+        linear_speed = self.map_joystick_to_velocity(magnitude)
+        # Preserve the full two-axis vector. The wheel mixer removes only
+        # terms too small to overcome motor friction.
+        direction = math.degrees(math.atan2(-left_y, left_x)) % 360.0
         
         # 设置小车速度
         try:
@@ -132,9 +136,10 @@ class ChassisController:
     
     def stop(self):
         """停止小车"""
+        self.move_active = False
         if self.chassis is not None:
             try:
-                self.chassis.set_velocity(0, 0, 0)
+                self.chassis.reset_motors()
             except:
                 pass
 
@@ -483,9 +488,6 @@ class PS2Controller:
         # 只有当L1和R1都没有按下时，才使用摇杆控制小车
         if not self.l1_pressed and not self.r1_pressed:
             self.chassis_ctrl.control_chassis(x, y)
-        else:
-            # 如果L1或R1按下，停止小车
-            self.chassis_ctrl.stop()
     
     def process_right_joystick(self, x, y):
         """处理右摇杆输入 - 控制舵机"""
@@ -752,36 +754,32 @@ class PS2Controller:
             else:
                 if self.connected:
                     self.connected = False
+                    self.chassis_ctrl.stop()
                     if self.js:
                         self.js.quit()
                     pygame.joystick.quit()
                     print("手柄已断开")
             
             if self.connected:
-                # 处理事件
-                for event in pygame.event.get():
-                    if event.type == pygame.JOYAXISMOTION:
-                        # 左摇杆移动事件（小车控制）
-                        if event.axis == self.axis_mapping["left_x"] or event.axis == self.axis_mapping["left_y"]:
-                            current_Lx = self.js.get_axis(self.axis_mapping["left_x"])
-                            current_Ly = self.js.get_axis(self.axis_mapping["left_y"])
-                            if self.shield:  # 模拟模式
-                                self.process_left_joystick(current_Lx, current_Ly)
-                        
-                        # 右摇杆移动事件（舵机控制）
-                        if event.axis == self.axis_mapping["right_x"] or event.axis == self.axis_mapping["right_y"]:
-                            current_Rx = self.js.get_axis(self.axis_mapping["right_x"])
-                            current_Ry = self.js.get_axis(self.axis_mapping["right_y"])
-                            
-                            if self.shield:  # 模拟模式
-                                self.process_right_joystick(current_Rx, current_Ry)
-                    
-                    elif event.type == pygame.JOYHATMOTION:
-                        # 方向键事件
-                        pass
+                # Drain SDL's queue, then poll the latest complete stick state.
+                # Axis events themselves are intentionally ignored because an
+                # event-only controller can miss the final centered position.
+                pygame.event.get()
                 
                 # 处理按钮
                 self.process_buttons()
+
+                calibrating = (
+                    self.calibration_monitor is not None
+                    and self.calibration_monitor.is_alive()
+                )
+                if self.shield and not calibrating:
+                    current_Lx = self.js.get_axis(self.axis_mapping["left_x"])
+                    current_Ly = self.js.get_axis(self.axis_mapping["left_y"])
+                    current_Rx = self.js.get_axis(self.axis_mapping["right_x"])
+                    current_Ry = self.js.get_axis(self.axis_mapping["right_y"])
+                    self.process_left_joystick(current_Lx, current_Ly)
+                    self.process_right_joystick(current_Rx, current_Ry)
                 
                 # 更新舵机平滑速度
                 self.update_smooth_speed()

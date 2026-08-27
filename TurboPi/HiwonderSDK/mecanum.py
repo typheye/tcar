@@ -22,17 +22,46 @@ class MecanumChassis:
         # Below this PWM the loaded mecanum motors stall and emit a sustained
         # high-pitched tone. Keep every nonzero wheel command driveable.
         self.minimum_motor_speed = 26
+        self.relative_wheel_deadband = 0.08
+        self._last_motor_commands = None
 
     def _motor_command(self, value):
         if abs(value) < 1e-9:
             return 0
-        if abs(value) < self.minimum_motor_speed:
-            return self.minimum_motor_speed if value > 0 else -self.minimum_motor_speed
         return int(max(-100, min(100, round(value))))
 
+    def _mix_motor_commands(self, values):
+        """Preserve wheel ratios without energizing near-zero wheel terms."""
+        peak = max(abs(value) for value in values)
+        if peak < 1e-9:
+            return [0, 0, 0, 0]
+
+        cutoff = peak * self.relative_wheel_deadband
+        filtered = [0.0 if abs(value) <= cutoff else value for value in values]
+        active = [abs(value) for value in filtered if abs(value) > 1e-9]
+        if not active:
+            return [0, 0, 0, 0]
+
+        # Scale the complete wheel vector, not individual wheels. This keeps
+        # the requested direction intact whenever motor headroom permits it.
+        gain = max(1.0, self.minimum_motor_speed / min(active))
+        gain = min(gain, 100.0 / max(active))
+        commands = [self._motor_command(value * gain) for value in filtered]
+        return [
+            0 if command and abs(command) < self.minimum_motor_speed else command
+            for command in commands
+        ]
+
+    def _write_motor_commands(self, commands, force=False):
+        commands = tuple(commands)
+        if not force and commands == self._last_motor_commands:
+            return
+        for motor_id, command in enumerate(commands, start=1):
+            Board.setMotor(motor_id, command)
+        self._last_motor_commands = commands
+
     def reset_motors(self):
-        for i in range(1, 5):
-            Board.setMotor(i, 0)
+        self._write_motor_commands((0, 0, 0, 0), force=True)
             
         self.velocity = 0
         self.direction = 0
@@ -54,16 +83,15 @@ class MecanumChassis:
         vx = velocity * math.cos(direction * rad_per_deg)
         vy = velocity * math.sin(direction * rad_per_deg)
         vp = -angular_rate * (self.a + self.b)
-        v1 = self._motor_command(vy + vx - vp)
-        v2 = self._motor_command(vy - vx + vp)
-        v3 = self._motor_command(vy - vx - vp)
-        v4 = self._motor_command(vy + vx + vp)
+        commands = self._mix_motor_commands((
+            vy + vx - vp,
+            vy - vx + vp,
+            vy - vx - vp,
+            vy + vx + vp,
+        ))
         if fake:
-            return
-        Board.setMotor(1, v1)
-        Board.setMotor(2, v2)
-        Board.setMotor(3, v3)
-        Board.setMotor(4, v4)
+            return commands
+        self._write_motor_commands(commands)
         self.velocity = velocity
         self.direction = direction
         self.angular_rate = angular_rate

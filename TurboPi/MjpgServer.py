@@ -16,6 +16,9 @@ import numpy as np
 import time
 import queue
 import threading
+import json
+import hmac
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer,ThreadingHTTPServer
 from socketserver import ThreadingMixIn
 from io import StringIO, BytesIO
@@ -31,6 +34,8 @@ frame_condition = threading.Condition(frame_lock)
 jpg_condition = threading.Condition()
 quality = (int(cv2.IMWRITE_JPEG_QUALITY), 74)
 paused_client_ips = set()
+AUTH_USERNAME = os.environ.get('TCAR_USERNAME', 'tcar')
+AUTH_PASSWORD = os.environ.get('TCAR_PASSWORD', 'admin123')
 
 
 def set_paused_clients(client_ips):
@@ -91,6 +96,40 @@ def _encode_frames():
                 jpg_condition.notify_all()
 
 class MJPG_Handler(BaseHTTPRequestHandler):
+    def _send_json(self, status, payload):
+        body = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        if self.path != '/api/login':
+            self.send_error(404)
+            return
+        try:
+            content_length = int(self.headers.get('Content-Length', '0'))
+            if content_length <= 0 or content_length > 4096:
+                raise ValueError('invalid request size')
+            payload = json.loads(self.rfile.read(content_length).decode('utf-8'))
+            if not isinstance(payload, dict):
+                raise ValueError('request body must be an object')
+            username = str(payload.get('username', ''))
+            password = str(payload.get('password', ''))
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+            self._send_json(400, {'status': 0, 'error': 'invalid_request'})
+            return
+        authenticated = (
+            hmac.compare_digest(username, AUTH_USERNAME)
+            and hmac.compare_digest(password, AUTH_PASSWORD)
+        )
+        if not authenticated:
+            self._send_json(401, {'status': 0, 'error': 'invalid_credentials'})
+            return
+        self._send_json(200, {'status': 1})
+
     def do_GET(self):
         global jpg_show, jpg_show_time, jpg_sequence
         client_ip = self.client_address[0]
