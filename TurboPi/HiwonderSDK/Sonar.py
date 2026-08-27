@@ -35,6 +35,7 @@ class Sonar:
         self.i2c = 1
         self.Pixels = [0,0]
         self.RGBMode = 0
+        self._suspended = False
         # Every distance/RGB operation targets the same stateful I2C device.
         # Keep multi-register transactions together when telemetry, gameplay,
         # and RPC requests arrive from different threads.
@@ -51,6 +52,8 @@ class Sonar:
     def setRGBMode(self, mode):
         try:
             with self._lock:
+                if self._suspended:
+                    return
                 with SMBus(self.i2c) as bus:
                     bus.write_byte_data(self.i2c_addr, self.__RGB_MODE, mode)
                 self.RGBMode = mode
@@ -69,6 +72,8 @@ class Sonar:
                 return 
             start_reg = 3 if index == 0 else 6
             with self._lock:
+                if self._suspended:
+                    return
                 with SMBus(self.i2c) as bus:
                     bus.write_byte_data(self.i2c_addr, start_reg, 0xFF & (rgb >> 16))
                     bus.write_byte_data(self.i2c_addr, start_reg+1, 0xFF & (rgb >> 8))
@@ -93,6 +98,8 @@ class Sonar:
             start_reg = 9 if index == 0 else 12
             cycle = int(cycle / 100)
             with self._lock:
+                if self._suspended:
+                    return
                 with SMBus(self.i2c) as bus:
                     bus.write_byte_data(self.i2c_addr, start_reg + rgb, cycle)
         except BaseException as e:
@@ -108,17 +115,42 @@ class Sonar:
             self.setBreathCycle(0,1, 2000)
             self.setBreathCycle(0,2, 3400)
 
-    def resetLights(self):
-        """Return both sonar LEDs to a stable, off, non-breathing state."""
+    def setSuspended(self, suspended):
+        """Block normal sonar I2C traffic during shared-bus calibration."""
         with self._lock:
-            self.setRGBMode(0)
-            self.setPixelColor(0, Board.PixelColor(0, 0, 0))
-            self.setPixelColor(1, Board.PixelColor(0, 0, 0))
+            self._suspended = bool(suspended)
+
+    def resetLights(self, retries=3, settle=0.12):
+        """Clear all RGB state and leave both sonar LEDs stably off."""
+        with self._lock:
+            for attempt in range(max(1, int(retries))):
+                try:
+                    with SMBus(self.i2c) as bus:
+                        # Mode 0 is steady RGB. Clear both color registers and
+                        # all six retained breathing periods; otherwise a
+                        # single corrupted mode write can revive old patterns.
+                        bus.write_byte_data(self.i2c_addr, self.__RGB_MODE, 0)
+                        for register in range(self.__RGB1_R, self.__RGB2_B + 1):
+                            bus.write_byte_data(self.i2c_addr, register, 0)
+                        for register in range(
+                            self.__RGB1_R_BREATHING_CYCLE,
+                            self.__RGB2_B_BREATHING_CYCLE + 1,
+                        ):
+                            bus.write_byte_data(self.i2c_addr, register, 0)
+                        bus.write_byte_data(self.i2c_addr, self.__RGB_MODE, 0)
+                    self.Pixels = [0, 0]
+                    self.RGBMode = 0
+                except BaseException as e:
+                    print(e)
+                if attempt + 1 < retries:
+                    time.sleep(settle)
 
     def getDistance(self):
         dist = 99999
         try:
             with self._lock:
+                if self._suspended:
+                    return 5000
                 with SMBus(self.i2c) as bus:
                     msg = i2c_msg.write(self.i2c_addr, [0,])
                     bus.i2c_rdwr(msg)

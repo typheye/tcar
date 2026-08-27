@@ -22,6 +22,7 @@ from io import StringIO, BytesIO
 
 img_show = None
 jpg_show = None
+jpg_show_time = None
 frame_lock = threading.Lock()
 quality = (int(cv2.IMWRITE_JPEG_QUALITY), 78)
 
@@ -39,14 +40,11 @@ def _process_camera_frame(frame):
         for index in range(3)
     ])
 
-    # The sensor oversaturates reds.  Pull saturation back toward the phone
-    # reference and apply a lightweight unsharp mask for fullscreen scaling.
+    # Blend with the source to preserve scene colors. Full-frame HSV and
+    # Gaussian passes were intentionally removed: on the Pi they pushed one
+    # frame above 250 ms and caused visible video latency.
     balanced = cv2.addWeighted(balanced, 0.72, frame, 0.28, 0)
-    hsv = cv2.cvtColor(balanced, cv2.COLOR_BGR2HSV)
-    hsv[:, :, 1] = cv2.convertScaleAbs(hsv[:, :, 1], alpha=0.80)
-    corrected = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-    blurred = cv2.GaussianBlur(corrected, (0, 0), 0.75)
-    return cv2.addWeighted(corrected, 1.18, blurred, -0.18, 0)
+    return balanced
 
 
 def set_frame(frame):
@@ -57,7 +55,7 @@ def set_frame(frame):
 
 
 def _encode_frames():
-    global jpg_show
+    global jpg_show, jpg_show_time
     while True:
         with frame_lock:
             frame = img_show
@@ -68,11 +66,12 @@ def _encode_frames():
             ret, jpg = cv2.imencode('.jpg', processed, quality)
             if ret:
                 jpg_show = jpg.tobytes()
+                jpg_show_time = time.time()
         time.sleep(1.0 / 20.0)
 
 class MJPG_Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        global jpg_show
+        global jpg_show, jpg_show_time
         if self.path == '/?action=snapshot':
             jpg_bytes = jpg_show
             if jpg_bytes is None:
@@ -92,9 +91,12 @@ class MJPG_Handler(BaseHTTPRequestHandler):
             while True:
                 try:
                     jpg_bytes = jpg_show
+                    frame_time = jpg_show_time
                     if jpg_bytes is not None:
                         self.wfile.write(b'--frame\r\n')
                         self.wfile.write(b'Content-Type: image/jpeg\r\n')
+                        if frame_time is not None:
+                            self.wfile.write(f'X-Frame-Time: {frame_time:.6f}\r\n'.encode())
                         self.wfile.write(f'Content-Length: {len(jpg_bytes)}\r\n\r\n'.encode())
                         self.wfile.write(jpg_bytes)
                         self.wfile.write(b'\r\n')

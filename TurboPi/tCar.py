@@ -1284,12 +1284,21 @@ class SensorServer:
         return True, self.calibration_status
 
     def _run_full_calibration(self, mag_seconds):
+        success = False
+        suspend_sonar = getattr(self.sonar, "setSuspended", None)
         try:
+            if suspend_sonar:
+                suspend_sonar(True)
             with self.sensor_lock:
                 self.mpu.recalibrate_all(
                     mag_seconds=mag_seconds,
-                    phase_callback=self._set_calibration_status,
+                    phase_callback=lambda status: (
+                        None if status == "complete"
+                        else self._set_calibration_status(status)
+                    ),
                 )
+            success = True
+            self._set_calibration_status("restoring_sonar")
         except Exception as exc:
             self.calibration_status = f"failed:{exc}"
             print(f"Full sensor calibration failed: {exc}")
@@ -1302,6 +1311,10 @@ class SensorServer:
                     reset_lights()
                 except Exception as exc:
                     print(f"Sonar RGB reset failed: {exc}")
+            if suspend_sonar:
+                suspend_sonar(False)
+            if success:
+                self._set_calibration_status("complete")
             self.calibration_lock.release()
 
     def _set_calibration_status(self, status):
