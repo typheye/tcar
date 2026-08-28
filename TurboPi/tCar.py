@@ -22,6 +22,8 @@ def wrap_angle(angle):
 
 # ============ 闁烩剝甯掗幊搴ㄦ晬閹邦兘鏋栭柕蹇嬪灱椤?============
 class Sonar:
+    _shared_i2c_lock = threading.RLock()
+
     def __init__(self):
         self.i2c_addr = 0x77
         self.i2c = 1
@@ -31,19 +33,18 @@ class Sonar:
         """Read sonar distance in mm."""
         dist = 5000
         try:
-            with SMBus(self.i2c) as bus:
-                write = i2c_msg.write(self.i2c_addr, [0x00,])
-                bus.i2c_rdwr(write)
-                time.sleep(0.02)
-                
-                read = i2c_msg.read(self.i2c_addr, 2)
-                bus.i2c_rdwr(read)
-                
-                data = list(read)
-                if len(data) >= 2:
-                    dist = data[0] | (data[1] << 8)
-                    if dist < 30 or dist > 5000:
-                        dist = 5000
+            with self._shared_i2c_lock:
+                with SMBus(self.i2c) as bus:
+                    write = i2c_msg.write(self.i2c_addr, [0x00,])
+                    bus.i2c_rdwr(write)
+                    time.sleep(0.02)
+                    read = i2c_msg.read(self.i2c_addr, 2)
+                    bus.i2c_rdwr(read)
+                    data = list(read)
+                    if len(data) >= 2:
+                        dist = data[0] | (data[1] << 8)
+                        if dist < 30 or dist > 5000:
+                            dist = 5000
         except Exception as e:
             print(f"Sonar error: {e}")
             dist = 5000

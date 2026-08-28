@@ -13,6 +13,10 @@ if sys.version_info.major == 2:
     sys.exit(0)
 
 class Sonar:
+    # All Sonar instances address the same physical 0x77 controller. A
+    # per-instance lock allowed RPC/avoidance/calibration objects to interleave
+    # RGB and distance transactions and leave the LED mode half-written.
+    _shared_i2c_lock = threading.RLock()
     __units = {"mm":0, "cm":1}
     __dist_reg = 0
 
@@ -39,7 +43,7 @@ class Sonar:
         # Every distance/RGB operation targets the same stateful I2C device.
         # Keep multi-register transactions together when telemetry, gameplay,
         # and RPC requests arrive from different threads.
-        self._lock = threading.RLock()
+        self._lock = self._shared_i2c_lock
 
     def __getattr(self, attr):
         if attr in self.__units:

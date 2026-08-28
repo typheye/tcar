@@ -123,8 +123,6 @@ def startTruckPi():
     global HWEXT, HWSONIC
     global voltage, TCAR_SERVICE, RUNNING
     
-    BZ.init()
-
     # Share the one sonar object with tCar telemetry.  Creating a second
     # object caused concurrent stateful transactions against I2C address 0x77.
     def set_desktop_clients_paused(client_ips):
@@ -137,6 +135,9 @@ def startTruckPi():
         desktop_services_callback=set_desktop_clients_paused,
     )
     TCAR_SERVICE.start()
+    # Signal readiness only after MPU/magnetometer startup calibration has
+    # completed; avoid a misleading beep while the service is still settling.
+    BZ.init()
 
     previous_time = 0.00
     # 超声波开启后默认关闭灯，使用共享实例的原子复位。

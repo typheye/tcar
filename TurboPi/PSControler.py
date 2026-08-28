@@ -25,7 +25,7 @@ key_map = {"PSB_Y": 0, "PSB_B": 1, "PSB_A": 2, "PSB_X": 3,
 # Socket通信配置
 SOCKET_PATH = "/tmp/servo_control.sock"
 SENSOR_SERVER_ADDRESS = ("192.168.66.3", 8888)
-HEADING_RESET_MIN_YAW_RATE = 0.30
+HEADING_RESET_MIN_YAW_RATE = 0.15
 HEADING_RESET_TOLERANCE_DEG = 5.0
 HEADING_RESET_PULSE_SECONDS = 0.07
 HEADING_RESET_BRAKE_SECONDS = 0.12
@@ -53,7 +53,7 @@ class ChassisController:
         # 小车控制参数
         self.max_speed = 60      # 最大线速度 0~60
         self.max_yaw_rate = 2.0   # 最大偏航角速度 -2~2
-        self.min_yaw_rate = 0.22  # keeps all rotation wheels above PWM 26
+        self.min_yaw_rate = 0.15  # lowest closed-loop rate; below this brake
         self.move_active = False  # 移动激活状态
         
         # 左摇杆控制
@@ -360,6 +360,7 @@ class PS2Controller:
         self.button_latches = {}
         self.last_hat = (0, 0)
         self.suppressed_combo_active = None
+        self.desktop_combo_active = False
         self.last_camera_pan_angle = None
         self.last_camera_pan_publish = 0.0
         
@@ -539,6 +540,19 @@ class PS2Controller:
         print(f"朝向复位中断: {reason}")
         return True
 
+    def _toggle_desktop_services(self):
+        """Toggle the remote desktop routes without blocking the input loop."""
+        try:
+            reply = self._sensor_command(b"desktop_services_toggle", timeout=0.6)
+            print(f"桌面通信服务: {reply or 'no reply'}")
+            if reply.strip() == "paused":
+                BZ.desktop_services_paused()
+            elif reply.strip() == "active":
+                BZ.desktop_services_resumed()
+        except Exception as exc:
+            print(f"桌面通信切换失败: {exc}")
+            BZ.init(0.08)
+
     def _monitor_heading_reset(self):
         """Return to inertial zero with a deadband and pulsed final approach."""
         deadline = time.monotonic() + 12.0
@@ -571,13 +585,14 @@ class PS2Controller:
                     if abs_error > 30.0:
                         yaw_rate = 0.38
                     elif abs_error > 12.0:
-                        yaw_rate = 0.34
+                        yaw_rate = 0.28
                     else:
                         yaw_rate = HEADING_RESET_MIN_YAW_RATE
 
-                    # Physical testing shows the installed chassis yaw sign is
-                    # opposite the old logical left/right assumption.
-                    direction = 1 if error > 0.0 else -1
+                    # ChassisController maps direction=1 to the physical left
+                    # turn. Keep this sign conversion in one place for the
+                    # installed sensor orientation.
+                    direction = -1 if error > 0.0 else 1
                     command = (direction, yaw_rate)
                     if (last_command is not None
                             and last_command[0] != direction):
@@ -791,7 +806,6 @@ class PS2Controller:
                 if not self.brake_pressed:
                     self.brake_pressed = True
                     self.emergency_brake()
-                    BZ.keydown_PSControler()
                 return
             if self.brake_pressed:
                 self.brake_pressed = False
@@ -806,6 +820,18 @@ class PS2Controller:
             y_pressed = self.get_safe_button(key_map["PSB_Y"])
             l3_current = self.get_safe_button(key_map["PSB_L3"])
             now = time.monotonic()
+
+            # SELECT+Y toggles desktop camera/telemetry routes. Latch the
+            # chord so a held button produces one request only.
+            if select_pressed and y_pressed:
+                if not self.desktop_combo_active:
+                    self.desktop_combo_active = True
+                    self._toggle_desktop_services()
+                return
+            if self.desktop_combo_active:
+                if not select_pressed and not y_pressed:
+                    self.desktop_combo_active = False
+                return
 
             if (self.heading_reset_monitor is not None
                     and self.heading_reset_monitor.is_alive()):
@@ -837,20 +863,15 @@ class PS2Controller:
                     self.mode_combo_active = False
                 return
 
-            # SELECT+X and SELECT+Y are deliberately unassigned. Latch the
-            # chord until both keys are released so release order cannot
-            # leak through as a normal single-button press or sound.
+            # SELECT+X remains intentionally unassigned. Latch it until both
+            # keys are released so it cannot leak into a normal X action.
             if self.suppressed_combo_active is not None:
-                face_pressed = (
-                    x_pressed
-                    if self.suppressed_combo_active == "x"
-                    else y_pressed
-                )
+                face_pressed = x_pressed
                 if not select_pressed and not face_pressed:
                     self.suppressed_combo_active = None
                 return
-            if select_pressed and (x_pressed or y_pressed):
-                self.suppressed_combo_active = "x" if x_pressed else "y"
+            if select_pressed and x_pressed:
+                self.suppressed_combo_active = "x"
                 return
 
             # SELECT+A recalibrates inertial origin; SELECT+B performs the
@@ -936,10 +957,18 @@ class PS2Controller:
                     BZ.keydown_PSControler()
 
             hat = self.js.get_hat(0) if self.js.get_numhats() else (0, 0)
-            if hat != self.last_hat:
-                if hat != (0, 0):
-                    BZ.keydown_PSControler()
-                self.last_hat = hat
+            previous_hat = self.last_hat
+            self.last_hat = hat
+            if hat != (0, 0) and self.chassis_ctrl.is_drive_enabled():
+                # D-pad is the discrete four-direction drive input. It is
+                # intentionally independent from the left-stick mode toggle.
+                hat_x, hat_y = hat
+                if hat_x:
+                    self.chassis_ctrl.control_chassis(float(hat_x), 0.0)
+                elif hat_y:
+                    self.chassis_ctrl.control_chassis(0.0, float(-hat_y))
+            elif hat == (0, 0) and previous_hat != (0, 0):
+                self.chassis_ctrl.stop()
             
         except Exception as e:
             print(f"按钮处理错误: {e}")
@@ -998,7 +1027,8 @@ class PS2Controller:
                 current_Ly = self.js.get_axis(self.axis_mapping["left_y"])
                 current_Rx = self.js.get_axis(self.axis_mapping["right_x"])
                 current_Ry = self.js.get_axis(self.axis_mapping["right_y"])
-                if not calibrating and not resetting_heading:
+                if (not calibrating and not resetting_heading
+                        and self.last_hat == (0, 0)):
                     self.process_left_joystick(current_Lx, current_Ly)
                 if not self.brake_pressed:
                     self.process_right_joystick(current_Rx, current_Ry)
