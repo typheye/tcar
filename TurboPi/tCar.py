@@ -54,8 +54,13 @@ class Sonar:
 class Magnetometer:
     QMC5883L_ADDR = 0x0D
     HMC5883L_ADDR = 0x1E
-    COORDINATE_AXIS_MAP = [0, 1, 2]
+    # Fixed vehicle wiring/mounting map. Calibration estimates only hard/soft
+    # iron values; it must never reorder physical axes based on noisy ranges.
+    COORDINATE_AXIS_MAP = [1, 2, 0]
     COORDINATE_AXIS_SIGN = [1.0, -1.0, -1.0]
+    HEADING_FILTER_WINDOW = 151
+    HEADING_FILTER_TAU_SECONDS = 1.2
+    HEADING_MAX_RATE_DPS = 60.0
 
     def __init__(self, bus, cal_file=None):
         self.bus = bus
@@ -74,6 +79,8 @@ class Magnetometer:
         self.weight = 0.001
         self.field_radius = 80.0
         self.last_heading = None
+        self.heading_samples = deque(maxlen=self.HEADING_FILTER_WINDOW)
+        self.heading_filter_time = None
         self._load_calibration()
         self._detect_and_init()
 
@@ -89,8 +96,28 @@ class Magnetometer:
             axis_sign = cfg.get("axis_sign", self.COORDINATE_AXIS_SIGN)
             if sorted(axis_map) != [0, 1, 2] or len(axis_sign) != 3:
                 raise ValueError("invalid magnetometer axis mapping")
-            self.axis_map = [int(v) for v in axis_map]
-            self.axis_sign = [float(v) for v in axis_sign]
+            old_axis_map = [int(v) for v in axis_map]
+            old_axis_sign = [float(v) for v in axis_sign]
+            if any(abs(value) < 1e-9 for value in old_axis_sign):
+                raise ValueError("invalid zero magnetometer axis sign")
+            canonical_map = list(self.COORDINATE_AXIS_MAP)
+            remapped_offset = []
+            remapped_scale = []
+            for output_axis, raw_axis in enumerate(canonical_map):
+                old_output_axis = old_axis_map.index(raw_axis)
+                raw_center = self.offset[old_output_axis] / old_axis_sign[old_output_axis]
+                remapped_offset.append(
+                    raw_center * self.COORDINATE_AXIS_SIGN[output_axis]
+                )
+                remapped_scale.append(self.scale[old_output_axis])
+            self.axis_map = canonical_map
+            self.axis_sign = list(self.COORDINATE_AXIS_SIGN)
+            self.offset = remapped_offset
+            self.scale = remapped_scale
+            if self.axis_map != old_axis_map:
+                print(
+                    f"Mag axis order normalized: {old_axis_map} -> {self.axis_map}"
+                )
             self.yaw_sign = float(cfg.get("yaw_sign", self.yaw_sign))
             self.declination = float(cfg.get("declination", self.declination))
             self.weight = min(float(cfg.get("weight", self.weight)), self.weight)
@@ -201,6 +228,44 @@ class Magnetometer:
         """
         return (math.degrees(math.atan2(my, -mx)) + self.declination) % 360.0
 
+    def _filter_heading(self, heading, now=None):
+        """Robust circular median with a physical turn-rate limit."""
+        now = time.monotonic() if now is None else float(now)
+        self.heading_samples.append(float(heading) % 360.0)
+        if self.last_heading is None:
+            sx = sum(math.cos(math.radians(value)) for value in self.heading_samples)
+            sy = sum(math.sin(math.radians(value)) for value in self.heading_samples)
+            candidate = math.degrees(math.atan2(sy, sx)) % 360.0
+            self.last_heading = candidate
+            self.heading_filter_time = now
+            return candidate
+
+        center = self.last_heading
+        deltas = sorted(wrap_angle(value - center) for value in self.heading_samples)
+        middle = len(deltas) // 2
+        median_delta = (
+            deltas[middle]
+            if len(deltas) % 2
+            else (deltas[middle - 1] + deltas[middle]) * 0.5
+        )
+        candidate = (center + median_delta) % 360.0
+        previous_time = self.heading_filter_time
+        dt = 0.005 if previous_time is None else max(
+            0.005, min(0.25, now - previous_time)
+        )
+        alpha = 1.0 - math.exp(-dt / self.HEADING_FILTER_TAU_SECONDS)
+        max_step = self.HEADING_MAX_RATE_DPS * dt
+        filtered_step = wrap_angle(candidate - center) * alpha
+        step = max(-max_step, min(max_step, filtered_step))
+        self.last_heading = (center + step) % 360.0
+        self.heading_filter_time = now
+        return self.last_heading
+
+    def _reset_heading_filter(self):
+        self.heading_samples.clear()
+        self.last_heading = None
+        self.heading_filter_time = None
+
     def diagnostic(self, current_yaw=None):
         if not self.available:
             return None
@@ -217,7 +282,7 @@ class Magnetometer:
         strength = math.sqrt(mx * mx + my * my)
         field_valid = self._field_is_valid(strength)
         if field_valid and not saturated and abs(mx) + abs(my) >= 1e-6:
-            heading = self._heading_from_xy(mx, my)
+            heading = self._filter_heading(self._heading_from_xy(mx, my))
             rel_yaw = wrap_angle((heading - self.yaw_zero) * self.yaw_sign)
             if current_yaw is not None:
                 yaw_error = wrap_angle(rel_yaw - current_yaw)
@@ -246,8 +311,7 @@ class Magnetometer:
             return None
         if not self._field_is_valid(math.sqrt(mx * mx + my * my)):
             return None
-        self.last_heading = self._heading_from_xy(mx, my)
-        return self.last_heading
+        return self._filter_heading(self._heading_from_xy(mx, my))
 
     def zero_yaw(self, samples=40):
         if not self.available:
@@ -280,6 +344,7 @@ class Magnetometer:
         # Never expose the previous known-bad NSEW result while collecting a
         # replacement.  It becomes valid again only after full coverage.
         self.calibrated = False
+        self._reset_heading_filter()
         print(f"Rotate the complete car exactly one full 360-degree turn over {seconds} seconds...")
         raw_samples = []
         count = 0
@@ -323,13 +388,14 @@ class Magnetometer:
         raw_mins = [min(sample[i] for sample in raw_samples) for i in range(3)]
         raw_maxs = [max(sample[i] for sample in raw_samples) for i in range(3)]
         raw_radii = [(raw_maxs[i] - raw_mins[i]) * 0.5 for i in range(3)]
-        # The board may be mounted upside-down or on its edge.  A level car
-        # rotation reveals the two axes that actually span the horizontal
-        # magnetic plane; choose them from measured coverage instead of a
-        # guessed PCB orientation.
-        heading_axes = sorted(range(3), key=lambda i: raw_radii[i], reverse=True)[:2]
-        vertical_axis = next(i for i in range(3) if i not in heading_axes)
-        self.axis_map = [heading_axes[0], heading_axes[1], vertical_axis]
+        # Axis ownership belongs to the fixed 4B hardware map. A calibration
+        # turn may validate coverage but cannot mutate the coordinate system.
+        heading_axes = list(self.COORDINATE_AXIS_MAP[:2])
+        vertical_axis = self.COORDINATE_AXIS_MAP[2]
+        if raw_radii[vertical_axis] > min(raw_radii[axis] for axis in heading_axes) * 0.75:
+            print(f"Mag calibration failed: ambiguous vertical axis {raw_radii}")
+            return False
+        self.axis_map = heading_axes + [vertical_axis]
         self.axis_sign = list(self.COORDINATE_AXIS_SIGN)
         mapped_samples = [
             [sample[self.axis_map[i]] * self.axis_sign[i] for i in range(3)]
@@ -374,6 +440,7 @@ class Magnetometer:
         print(f"  auto axis_map: {self.axis_map}, axis_sign: {self.axis_sign}")
         print(f"  gyro turn: {turned_degrees:.1f} deg")
         self.calibrated = True
+        self._reset_heading_filter()
         return True
 
 
@@ -754,6 +821,14 @@ class MPU6050DMP:
 
 # ============ MPU6050 ============
 class MPU6050:
+    TILT_GYRO_STILL_DPS = 0.8
+    TILT_GRAVITY_MOTION_DEG = 2.0
+    TILT_YAW_LEAK_RATIO = 0.35
+    TILT_GRAVITY_REANCHOR_DEG = 3.0
+    TILT_GRAVITY_FORCE_REANCHOR_DEG = 8.0
+    TILT_MOTION_CONFIRM_SECONDS = 0.15
+    TILT_SETTLE_SECONDS = 0.35
+
     def __init__(self, address=0x68, bus=1):
         self.bus = smbus.SMBus(bus)
         self.address = address
@@ -777,6 +852,7 @@ class MPU6050:
         self.dmp_raw_yaw_unwrapped = 0.0
         self.dmp_corrected_yaw = 0.0
         self.dmp_yaw_time = None
+        self._reset_tilt_stabilizer()
         
         self._init_mpu6050()
         self.calibrate_gyro()
@@ -910,6 +986,114 @@ class MPU6050:
         internal_q = self._quat_from_euler(-pitch, roll, -yaw)
         return [internal_q[0], internal_q[1], -internal_q[2], -internal_q[3]]
 
+    def _reset_tilt_stabilizer(self):
+        self.tilt_anchor_pitch = 0.0
+        self.tilt_anchor_roll = 0.0
+        self.tilt_gravity_reference = None
+        self.tilt_still_since = None
+        self.tilt_reanchor_since = None
+        self.tilt_motion_candidate_since = None
+        self.tilt_motion_seen = False
+
+    @staticmethod
+    def _gravity_angle_degrees(first, second):
+        dot = sum(first[index] * second[index] for index in range(3))
+        return math.degrees(math.acos(max(-1.0, min(1.0, dot))))
+
+    def _stabilize_tilt(self, pitch, roll, ax, ay, az, gx, gy, gz=0.0,
+                        now=None):
+        """Reject X/Y gyro drift unless gravity confirms a real tilt."""
+        now = time.monotonic() if now is None else float(now)
+        tilt_rate = max(abs(gx / 16.4), abs(gy / 16.4))
+        yaw_rate = abs(gz / 16.4)
+        ax_g, ay_g, az_g = ax / 16384.0, ay / 16384.0, az / 16384.0
+        gravity_norm = math.sqrt(ax_g * ax_g + ay_g * ay_g + az_g * az_g)
+        # The installed MPU6050 measures a stationary 1 g vector near 1.115 g.
+        # Direction is reliable even though absolute scale is biased.
+        gravity_valid = 0.80 <= gravity_norm <= 1.25
+        if not gravity_valid:
+            self.tilt_reanchor_since = None
+            if tilt_rate <= self.TILT_GYRO_STILL_DPS:
+                return self.tilt_anchor_pitch, self.tilt_anchor_roll
+            self.tilt_still_since = None
+            self.tilt_motion_seen = True
+            return pitch, roll
+
+        gravity = (
+            ax_g / gravity_norm,
+            ay_g / gravity_norm,
+            az_g / gravity_norm,
+        )
+        if self.tilt_gravity_reference is None:
+            self.tilt_gravity_reference = gravity
+            self.tilt_still_since = now - self.TILT_SETTLE_SECONDS
+            return self.tilt_anchor_pitch, self.tilt_anchor_roll
+
+        gravity_delta = self._gravity_angle_degrees(
+            gravity, self.tilt_gravity_reference
+        )
+
+        # A planar yaw must not change gravity in the sensor frame. Chassis
+        # vibration can nevertheless leak into the DMP X/Y gyro channels, so
+        # never expose pitch/roll from gyro rate alone. Require a persistent
+        # gravity-direction change before accepting a real tilt.
+        if gravity_delta < self.TILT_GRAVITY_MOTION_DEG:
+            self.tilt_motion_candidate_since = None
+            self.tilt_reanchor_since = None
+            if self.tilt_still_since is None:
+                self.tilt_still_since = now
+            return self.tilt_anchor_pitch, self.tilt_anchor_roll
+
+        # During an in-place turn, X/Y vibration is axis leakage when it is
+        # small relative to the true Z rotation. Do not classify it as tilt.
+        if (yaw_rate > self.TILT_GYRO_STILL_DPS
+                and tilt_rate < yaw_rate * self.TILT_YAW_LEAK_RATIO):
+            self.tilt_motion_candidate_since = None
+            self.tilt_reanchor_since = None
+            return self.tilt_anchor_pitch, self.tilt_anchor_roll
+
+        # Tiny X/Y rates are treated as gyro bias. If gravity still points in
+        # the same direction, retain the last physically confirmed tilt.
+        if tilt_rate <= self.TILT_GYRO_STILL_DPS:
+            self.tilt_motion_candidate_since = None
+            reanchor_allowed = (
+                self.tilt_motion_seen
+                or gravity_delta >= self.TILT_GRAVITY_FORCE_REANCHOR_DEG
+            )
+            if (gravity_delta >= self.TILT_GRAVITY_REANCHOR_DEG
+                    and reanchor_allowed):
+                if self.tilt_reanchor_since is None:
+                    self.tilt_reanchor_since = now
+                if now - self.tilt_reanchor_since >= self.TILT_SETTLE_SECONDS:
+                    self.tilt_anchor_pitch = pitch
+                    self.tilt_anchor_roll = roll
+                    self.tilt_gravity_reference = gravity
+                    self.tilt_still_since = now - self.TILT_SETTLE_SECONDS
+                    self.tilt_reanchor_since = None
+                    self.tilt_motion_seen = False
+                    return self.tilt_anchor_pitch, self.tilt_anchor_roll
+                return pitch, roll
+
+            self.tilt_reanchor_since = None
+            if self.tilt_still_since is None:
+                self.tilt_still_since = now
+            if now - self.tilt_still_since >= self.TILT_SETTLE_SECONDS:
+                return self.tilt_anchor_pitch, self.tilt_anchor_roll
+            return pitch, roll
+
+        # Confirm a definite X/Y rotation before exposing it. Once it stops,
+        # the persistent gravity direction above decides whether to re-anchor.
+        if self.tilt_motion_candidate_since is None:
+            self.tilt_motion_candidate_since = now
+            return self.tilt_anchor_pitch, self.tilt_anchor_roll
+        if (now - self.tilt_motion_candidate_since
+                < self.TILT_MOTION_CONFIRM_SECONDS):
+            return self.tilt_anchor_pitch, self.tilt_anchor_roll
+        self.tilt_still_since = None
+        self.tilt_reanchor_since = None
+        self.tilt_motion_seen = True
+        return pitch, roll
+
     @staticmethod
     def _vehicle_axis_quaternion(qw, qx, qy, qz):
         """Convert sensor quaternion axes to tCar pitch/yaw/roll vehicle axes."""
@@ -942,6 +1126,7 @@ class MPU6050:
         notify("gyro")
         self.use_dmp = False
         self.last_dmp_attitude = None
+        self._reset_tilt_stabilizer()
         self._init_mpu6050()
         self.calibrate_gyro(samples=400)
         self.estimator = AttitudeEstimator(sample_freq=100)
@@ -1033,6 +1218,7 @@ class MPU6050:
         self.calibrate_gyro()
         self.estimator = AttitudeEstimator(sample_freq=100)
         self.calibrate_attitude_zero()
+        self._reset_tilt_stabilizer()
 
     def calibrate_dmp_zero(self, samples=80):
         """Set current DMP quaternion as zero orientation."""
@@ -1050,6 +1236,7 @@ class MPU6050:
         if last_q:
             self.dmp_zero_q = list(last_q)
             self._reset_dmp_yaw_tracking()
+            self._reset_tilt_stabilizer()
             print("  DMP attitude zero calibrated")
         else:
             print("  DMP zero skipped: no FIFO quaternion")
@@ -1191,6 +1378,9 @@ class MPU6050:
                 pitch, roll, raw_yaw, _ = self._apply_output_axis_signs(
                     raw_pitch, raw_roll, raw_yaw, rel_q
                 )
+                pitch, roll = self._stabilize_tilt(
+                    pitch, roll, ax, ay, az, gx, gy, gz
+                )
                 yaw = self._correct_dmp_yaw(raw_yaw, gz / 16.4)
                 qw, qx, qy, qz = self._output_quat_from_angles(pitch, roll, yaw)
                 pitch, roll, yaw, qw, qx, qy, qz = self._fuse_mag_yaw(pitch, roll, yaw, qw, qx, qy, qz, gz / 16.4)
@@ -1199,6 +1389,18 @@ class MPU6050:
                 return (pitch, roll, yaw, qw, qx, qy, qz, ax, ay, az, gx, gy, gz)
             if self.last_dmp_attitude:
                 pitch, roll, yaw, qw, qx, qy, qz = self.last_dmp_attitude
+                pitch, roll = self._stabilize_tilt(
+                    pitch, roll, ax, ay, az, gx, gy, gz
+                )
+                qw, qx, qy, qz = self._output_quat_from_angles(
+                    pitch, roll, yaw
+                )
+                qw, qx, qy, qz = self._vehicle_axis_quaternion(
+                    qw, qx, qy, qz
+                )
+                self.last_dmp_attitude = (
+                    pitch, roll, yaw, qw, qx, qy, qz
+                )
                 return (pitch, roll, yaw, qw, qx, qy, qz, ax, ay, az, gx, gy, gz)
         
         ax_g = ax / 16384.0
@@ -1215,13 +1417,16 @@ class MPU6050:
         self.estimator.update(gx_dps, gy_dps, gz_dps, ax_g, ay_g, az_g)
         
         pitch, roll, yaw = self.estimator._euler_from_quat(self.estimator._relative_quat())
-        pitch, roll, yaw, out_q = self._apply_output_axis_signs(
+        pitch, roll, yaw, _ = self._apply_output_axis_signs(
             pitch,
             roll,
             yaw,
             self.estimator._relative_quat(),
         )
-        qw, qx, qy, qz = out_q
+        pitch, roll = self._stabilize_tilt(
+            pitch, roll, ax, ay, az, gx, gy, gz
+        )
+        qw, qx, qy, qz = self._output_quat_from_angles(pitch, roll, yaw)
         pitch, roll, yaw, qw, qx, qy, qz = self._fuse_mag_yaw(pitch, roll, yaw, qw, qx, qy, qz, gz_dps)
         qw, qx, qy, qz = self._vehicle_axis_quaternion(qw, qx, qy, qz)
         return (pitch, roll, yaw, qw, qx, qy, qz, ax, ay, az, gx, gy, gz)

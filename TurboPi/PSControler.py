@@ -9,6 +9,7 @@ import sys
 import json
 import socket
 import signal
+import struct
 import threading
 
 sys.path.append('/home/pi/TurboPi/')
@@ -24,6 +25,11 @@ key_map = {"PSB_Y": 0, "PSB_B": 1, "PSB_A": 2, "PSB_X": 3,
 # Socket通信配置
 SOCKET_PATH = "/tmp/servo_control.sock"
 SENSOR_SERVER_ADDRESS = ("192.168.66.3", 8888)
+HEADING_RESET_MIN_YAW_RATE = 0.30
+HEADING_RESET_TOLERANCE_DEG = 5.0
+HEADING_RESET_PULSE_SECONDS = 0.07
+HEADING_RESET_BRAKE_SECONDS = 0.12
+HEADING_RESET_MAX_FINAL_PULSES = 4
 
 # 全局运行标志
 RUNNING = True
@@ -55,6 +61,40 @@ class ChassisController:
         self.deadzone = 0.06      # suppress measured analog center noise
         self.release_deadzone = 0.035
         self.min_speed = 26.0     # overcome mecanum static friction
+        self.command_lock = threading.RLock()
+        self.drive_authorized = False
+        self.brake_engaged = False
+
+    def _stop_locked(self):
+        self.move_active = False
+        if self.chassis is None:
+            return True
+        try:
+            self.chassis.reset_motors()
+            return True
+        except Exception as exc:
+            print(f"底盘停止错误: {exc}")
+            return False
+
+    def set_drive_authorization(self, throttle, brake=False):
+        """Set the hard motion gate used by every chassis command."""
+        with self.command_lock:
+            was_enabled = self.drive_authorized and not self.brake_engaged
+            self.brake_engaged = bool(brake)
+            self.drive_authorized = bool(throttle) and not self.brake_engaged
+            if (was_enabled and not self.drive_authorized) or self.brake_engaged:
+                self._stop_locked()
+
+    def is_drive_enabled(self):
+        with self.command_lock:
+            return self.drive_authorized and not self.brake_engaged
+
+    def emergency_stop(self):
+        """Latch the brake and synchronously command all motors to zero."""
+        with self.command_lock:
+            self.brake_engaged = True
+            self.drive_authorized = False
+            return self._stop_locked()
         
     def map_joystick_to_velocity(self, value):
         """映射摇杆值到速度（带死区和曲线）"""
@@ -90,6 +130,9 @@ class ChassisController:
     
     def control_chassis(self, left_x, left_y):
         """控制小车底盘"""
+        if not self.is_drive_enabled():
+            self.stop()
+            return False
         if self.chassis is None:
             # 模拟模式
             speed = self.map_joystick_to_velocity(abs(left_y))
@@ -114,7 +157,11 @@ class ChassisController:
         
         # 设置小车速度
         try:
-            self.chassis.set_velocity(linear_speed, direction, yaw_rate)
+            with self.command_lock:
+                if not self.drive_authorized or self.brake_engaged:
+                    return False
+                self.chassis.set_velocity(linear_speed, direction, yaw_rate)
+            return True
         except Exception as e:
             print(f"小车控制错误: {e}")
     
@@ -122,6 +169,8 @@ class ChassisController:
         """转向
         direction: 1=左转, -1=右转
         """
+        if not self.is_drive_enabled():
+            return False
         if self.chassis is None:
             print(f"模拟: {'左' if direction == 1 else '右'}转")
             return True
@@ -130,7 +179,10 @@ class ChassisController:
         yaw_rate = max(self.min_yaw_rate, abs(yaw_rate))
         yaw_rate = -yaw_rate if direction == 1 else yaw_rate
         try:
-            self.chassis.set_velocity(0, 0, yaw_rate)
+            with self.command_lock:
+                if not self.drive_authorized or self.brake_engaged:
+                    return False
+                self.chassis.set_velocity(0, 0, yaw_rate)
             return True
         except Exception as e:
             print(f"平移控制错误: {e}")
@@ -138,15 +190,8 @@ class ChassisController:
     
     def stop(self):
         """停止小车"""
-        self.move_active = False
-        if self.chassis is None:
-            return True
-        try:
-            self.chassis.reset_motors()
-            return True
-        except Exception as exc:
-            print(f"底盘停止错误: {exc}")
-            return False
+        with self.command_lock:
+            return self._stop_locked()
 
 class ServoController:
     HORIZONTAL_SERVO_ID = 2
@@ -262,7 +307,6 @@ class PS2Controller:
         pygame.init()  # 初始化所有pygame模块
         pygame.joystick.init()
         
-        self.shield = True  # 模拟模式/数字模式
         self.connected = False
         self.js = None
         
@@ -286,7 +330,7 @@ class PS2Controller:
         self.smoothing_factor = 0.3  # 平滑因子
         
         # 控制模式
-        self.control_mode = "joystick"
+        self.control_mode = "analog"
         
         # 摇杆轴映射
         self.axis_mapping = {
@@ -305,6 +349,16 @@ class PS2Controller:
         self.calibration_combo_since = None
         self.calibration_combo_cooldown_until = 0.0
         self.calibration_monitor = None
+        self.calibration_cancel = threading.Event()
+        self.heading_reset_monitor = None
+        self.heading_reset_cancel = threading.Event()
+        self.heading_reset_command_lock = threading.Lock()
+        self.l3_pressed = False
+        self.throttle_pressed = False
+        self.brake_pressed = False
+        self.mode_combo_active = False
+        self.button_latches = {}
+        self.last_hat = (0, 0)
         self.suppressed_combo_active = None
         self.last_camera_pan_angle = None
         self.last_camera_pan_publish = 0.0
@@ -327,7 +381,7 @@ class PS2Controller:
             print(f"按钮数量: {self.js.get_numbuttons()}")
             print(f"帽子数量: {self.js.get_numhats()}")
             
-            print(f"模式: {'模拟' if self.shield else '数字'}")
+            print(f"左摇杆模式: {'连续' if self.control_mode == 'analog' else '四方向'}")
 
             return True
         return False
@@ -357,25 +411,41 @@ class PS2Controller:
             pass
         return False
 
-    def _update_shoulder_turn(self, l1_current, r1_current):
+    def _pressed_edge(self, name, pressed):
+        previous = self.button_latches.get(name, False)
+        self.button_latches[name] = bool(pressed)
+        return bool(pressed) and not previous
+
+    def emergency_brake(self, reason="R2"):
+        """Public controller brake interface; no motion command may bypass it."""
+        self.heading_reset_cancel.set()
+        self.calibration_cancel.set()
+        self.chassis_ctrl.emergency_stop()
+        self.last_Lxy = [0, 0]
+        self.l1_pressed = False
+        self.r1_pressed = False
+        self.shoulder_turn_state = None
+        self.target_speed = {1: 0, 2: 0}
+        self.current_speed = {1: 0, 2: 0}
+        print(f"急停: {reason}")
+
+    def _update_shoulder_turn(self, l1_current, r1_current, drive_enabled):
         """Apply one coherent chassis command for the complete L1/R1 state."""
         if l1_current and not self.l1_pressed:
             print("L1按下: 左转向")
-            if not self.shield:
-                BZ.keydown_PSControler()
+            BZ.keydown_PSControler()
         elif not l1_current and self.l1_pressed:
             print("L1释放")
 
         if r1_current and not self.r1_pressed:
             print("R1按下: 右转向")
-            if not self.shield:
-                BZ.keydown_PSControler()
+            BZ.keydown_PSControler()
         elif not r1_current and self.r1_pressed:
             print("R1释放")
 
         self.l1_pressed = bool(l1_current)
         self.r1_pressed = bool(r1_current)
-        if self.l1_pressed == self.r1_pressed:
+        if not drive_enabled or self.l1_pressed == self.r1_pressed:
             # None hands control back to the left stick; zero represents the
             # deliberate conflict state where both shoulder keys are held.
             desired_state = 0 if self.l1_pressed else None
@@ -384,7 +454,7 @@ class PS2Controller:
 
         if desired_state == self.shoulder_turn_state:
             return
-        if desired_state in (None, 0) or not self.shield:
+        if desired_state in (None, 0):
             applied = self.chassis_ctrl.stop()
         else:
             applied = self.chassis_ctrl.turn(desired_state)
@@ -402,6 +472,7 @@ class PS2Controller:
             print("传感器校准已在进行")
             return
         self.chassis_ctrl.stop()
+        self.calibration_cancel.clear()
         self.target_speed = {1: 0, 2: 0}
         self.current_speed = {1: 0, 2: 0}
         self.calibration_monitor = threading.Thread(
@@ -421,6 +492,135 @@ class PS2Controller:
             return reply.decode("utf-8", errors="replace")
         finally:
             sock.close()
+
+    def _read_gyro_heading(self, timeout=0.5):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        try:
+            sock.sendto(b"get_data", SENSOR_SERVER_ADDRESS)
+            packet, _ = sock.recvfrom(1024)
+            if len(packet) != 68:
+                raise RuntimeError(f"unexpected sensor packet: {len(packet)} bytes")
+            heading = struct.unpack("!17f", packet)[15]
+            if not math.isfinite(heading):
+                raise RuntimeError("invalid gyro heading")
+            return heading % 360.0
+        finally:
+            sock.close()
+
+    def request_heading_reset(self):
+        if self.calibration_monitor and self.calibration_monitor.is_alive():
+            print("传感器校准期间不能执行朝向复位")
+            BZ.init(0.08)
+            return
+        if self.heading_reset_monitor and self.heading_reset_monitor.is_alive():
+            return
+        if not self.chassis_ctrl.is_drive_enabled():
+            print("L3朝向复位需要持续按住L2油门")
+            BZ.init(0.08)
+            return
+        with self.heading_reset_command_lock:
+            self.chassis_ctrl.stop()
+        self.heading_reset_cancel.clear()
+        self.heading_reset_monitor = threading.Thread(
+            target=self._monitor_heading_reset,
+            name="tcar-heading-reset",
+            daemon=True,
+        )
+        self.heading_reset_monitor.start()
+
+    def _cancel_heading_reset(self, reason="刹车"):
+        monitor = self.heading_reset_monitor
+        if monitor is None or not monitor.is_alive():
+            return False
+        self.heading_reset_cancel.set()
+        with self.heading_reset_command_lock:
+            self.chassis_ctrl.stop()
+        print(f"朝向复位中断: {reason}")
+        return True
+
+    def _monitor_heading_reset(self):
+        """Return to inertial zero with a deadband and pulsed final approach."""
+        deadline = time.monotonic() + 12.0
+        settled_since = None
+        last_command = None
+        final_pulses = 0
+        try:
+            while (RUNNING and not self.heading_reset_cancel.is_set()
+                   and time.monotonic() < deadline):
+                if not self.chassis_ctrl.is_drive_enabled():
+                    self.heading_reset_cancel.set()
+                    break
+                heading = self._read_gyro_heading()
+                if self.heading_reset_cancel.is_set() or not RUNNING:
+                    break
+                error = (0.0 - heading + 180.0) % 360.0 - 180.0
+                abs_error = abs(error)
+                if abs_error <= HEADING_RESET_TOLERANCE_DEG:
+                    if last_command is not None:
+                        with self.heading_reset_command_lock:
+                            self.chassis_ctrl.stop()
+                        last_command = None
+                    if settled_since is None:
+                        settled_since = time.monotonic()
+                    elif time.monotonic() - settled_since >= 0.35:
+                        print(f"朝向复位完成: {heading:.1f}°")
+                        return
+                else:
+                    settled_since = None
+                    if abs_error > 30.0:
+                        yaw_rate = 0.38
+                    elif abs_error > 12.0:
+                        yaw_rate = 0.34
+                    else:
+                        yaw_rate = HEADING_RESET_MIN_YAW_RATE
+
+                    # Physical testing shows the installed chassis yaw sign is
+                    # opposite the old logical left/right assumption.
+                    direction = 1 if error > 0.0 else -1
+                    command = (direction, yaw_rate)
+                    if (last_command is not None
+                            and last_command[0] != direction):
+                        with self.heading_reset_command_lock:
+                            self.chassis_ctrl.stop()
+                        last_command = None
+                        time.sleep(HEADING_RESET_BRAKE_SECONDS)
+
+                    if command != last_command:
+                        with self.heading_reset_command_lock:
+                            if self.heading_reset_cancel.is_set() or not RUNNING:
+                                break
+                            if not self.chassis_ctrl.turn(direction, yaw_rate):
+                                self.heading_reset_cancel.set()
+                                break
+                        last_command = command
+
+                    # Minimum usable PWM is too coarse for continuous motion
+                    # near zero. Apply one short pulse, brake, then remeasure.
+                    if abs_error <= 12.0:
+                        time.sleep(HEADING_RESET_PULSE_SECONDS)
+                        with self.heading_reset_command_lock:
+                            self.chassis_ctrl.stop()
+                        last_command = None
+                        final_pulses += 1
+                        if final_pulses >= HEADING_RESET_MAX_FINAL_PULSES:
+                            print(
+                                f"朝向复位达到机械微调极限: {heading:.1f}°"
+                            )
+                            return
+                        time.sleep(HEADING_RESET_BRAKE_SECONDS)
+                        continue
+                time.sleep(0.04)
+            if self.heading_reset_cancel.is_set() or not RUNNING:
+                print("朝向复位已取消")
+                return
+            raise RuntimeError("heading reset timed out")
+        except Exception as exc:
+            print(f"朝向复位失败: {exc}")
+            BZ.init(0.5)
+        finally:
+            with self.heading_reset_command_lock:
+                self.chassis_ctrl.stop()
 
     def _publish_camera_pan(self, force=False):
         angle = self.servo_ctrl.horizontal_angle_degrees()
@@ -457,7 +657,12 @@ class PS2Controller:
                 raise RuntimeError(reply)
             BZ.calibration_started()
             last_phase = None
-            while RUNNING:
+            while RUNNING and not self.calibration_cancel.is_set():
+                if (kind == "magnetometer"
+                        and not self.chassis_ctrl.is_drive_enabled()):
+                    self.calibration_cancel.set()
+                    print("磁力校准停止: L2油门已释放或R2刹车已按下")
+                    break
                 status = self._sensor_command(b"calibration_status")
                 phase = status.split(":", 1)[0]
                 progress = None
@@ -471,25 +676,31 @@ class PS2Controller:
                     if kind == "magnetometer" and phase == "magnetometer":
                         # tCar integrates the calibrated Z gyro and ends this
                         # phase after one real 360-degree rotation.
+                        if (self.calibration_cancel.is_set()
+                                or not self.chassis_ctrl.is_drive_enabled()):
+                            break
                         turn_rate = 0.30
-                        self.chassis_ctrl.turn(1, turn_rate)
+                        if not self.chassis_ctrl.turn(1, turn_rate):
+                            self.calibration_cancel.set()
+                            break
                         auto_turning = True
                     elif auto_turning:
                         self.chassis_ctrl.stop()
                         auto_turning = False
                     last_phase = phase
                 if auto_turning and progress is not None:
-                    if progress >= 352.0:
-                        desired_rate = 0.22
-                    elif progress >= 330.0:
-                        desired_rate = 0.22
-                    elif progress >= 285.0:
-                        desired_rate = 0.24
+                    if progress >= 330.0:
+                        desired_rate = HEADING_RESET_MIN_YAW_RATE
                     else:
                         desired_rate = 0.30
                     if desired_rate != turn_rate:
+                        if (self.calibration_cancel.is_set()
+                                or not self.chassis_ctrl.is_drive_enabled()):
+                            break
                         turn_rate = desired_rate
-                        self.chassis_ctrl.turn(1, turn_rate)
+                        if not self.chassis_ctrl.turn(1, turn_rate):
+                            self.calibration_cancel.set()
+                            break
                 if phase == "complete":
                     BZ.calibration_finished()
                     return
@@ -528,6 +739,18 @@ class PS2Controller:
         # x: 左为负，右为正
         # y: 上为负，下为正
         
+        if not self.chassis_ctrl.is_drive_enabled():
+            self.chassis_ctrl.stop()
+            return
+        if self.control_mode == "cardinal":
+            magnitude = min(1.0, math.hypot(x, y))
+            if magnitude <= self.chassis_ctrl.deadzone:
+                x, y = 0.0, 0.0
+            elif abs(x) >= abs(y):
+                x, y = math.copysign(magnitude, x), 0.0
+            else:
+                x, y = 0.0, math.copysign(magnitude, y)
+
         # 只有当L1和R1都没有按下时，才使用摇杆控制小车
         if not self.l1_pressed and not self.r1_pressed:
             self.chassis_ctrl.control_chassis(x, y)
@@ -557,12 +780,62 @@ class PS2Controller:
     def process_buttons(self):
         """处理按钮输入"""
         try:
+            l2_pressed = self.get_safe_button(key_map["PSB_L2"])
+            r2_pressed = self.get_safe_button(key_map["PSB_R2"])
+            self.throttle_pressed = bool(l2_pressed)
+
+            # R2 is evaluated before every other state. The brake is latched
+            # in ChassisController, so concurrent worker threads cannot issue
+            # a nonzero command after this point.
+            if r2_pressed:
+                if not self.brake_pressed:
+                    self.brake_pressed = True
+                    self.emergency_brake()
+                    BZ.keydown_PSControler()
+                return
+            if self.brake_pressed:
+                self.brake_pressed = False
+                print("R2刹车释放")
+            self.chassis_ctrl.set_drive_authorization(l2_pressed, brake=False)
+
             select_pressed = self.get_safe_button(key_map["PSB_SELECT"])
+            start_pressed = self.get_safe_button(key_map["PSB_START"])
             a_pressed = self.get_safe_button(key_map["PSB_A"])
             b_pressed = self.get_safe_button(key_map["PSB_B"])
             x_pressed = self.get_safe_button(key_map["PSB_X"])
             y_pressed = self.get_safe_button(key_map["PSB_Y"])
+            l3_current = self.get_safe_button(key_map["PSB_L3"])
             now = time.monotonic()
+
+            if (self.heading_reset_monitor is not None
+                    and self.heading_reset_monitor.is_alive()):
+                if not l2_pressed:
+                    self._cancel_heading_reset("L2油门释放")
+                if not l3_current:
+                    self.l3_pressed = False
+                return
+
+            if (self.calibration_monitor is not None
+                    and self.calibration_monitor.is_alive()):
+                return
+
+            if select_pressed and start_pressed:
+                if not self.mode_combo_active:
+                    self.mode_combo_active = True
+                    self.control_mode = (
+                        "cardinal"
+                        if self.control_mode == "analog"
+                        else "analog"
+                    )
+                    self.chassis_ctrl.stop()
+                    mode_text = "四方向" if self.control_mode == "cardinal" else "连续"
+                    print(f"左摇杆模式切换: {mode_text}")
+                    BZ.keydown_combination_PSControler()
+                return
+            if self.mode_combo_active:
+                if not select_pressed and not start_pressed:
+                    self.mode_combo_active = False
+                return
 
             # SELECT+X and SELECT+Y are deliberately unassigned. Latch the
             # chord until both keys are released so release order cannot
@@ -611,6 +884,10 @@ class PS2Controller:
                 self.calibration_combo_active = combo_kind
                 self.calibration_combo_pending = None
                 self.calibration_combo_since = None
+                if combo_kind == "magnetometer" and not l2_pressed:
+                    print("SELECT + B磁力校准需要持续按住L2油门")
+                    BZ.init(0.08)
+                    return
                 if combo_kind == "inertial":
                     print("SELECT + A: 重新校准陀螺仪、姿态和初始朝向")
                 else:
@@ -623,132 +900,46 @@ class PS2Controller:
             if select_pressed and (a_pressed or b_pressed):
                 return
 
-            # SELECT + START 切换模式
-            if select_pressed:
-                time.sleep(0.01)
-                if self.get_safe_button(key_map["PSB_START"]):
-                    self.shield = not self.shield
-                    print(f"模式切换: {'模拟' if self.shield else '数字'}")
-                    BZ.keydown_combination_PSControler()
-                    time.sleep(0.5)
+            if l3_current and not self.l3_pressed:
+                self.l3_pressed = True
+                print("L3按下: 朝向复位")
+                BZ.keydown_PSControler()
+                self.request_heading_reset()
+                if (self.heading_reset_monitor is not None
+                        and self.heading_reset_monitor.is_alive()):
                     return
-            
+            elif not l3_current and self.l3_pressed:
+                self.l3_pressed = False
+
             # Resolve both shoulder keys together so rapid direction changes
             # cannot leave a stale stop or partial wheel command behind.
             self._update_shoulder_turn(
                 self.get_safe_button(key_map["PSB_L1"]),
                 self.get_safe_button(key_map["PSB_R1"]),
+                self.chassis_ctrl.is_drive_enabled(),
             )
 
-            # L2
-            if self.get_safe_button(key_map["PSB_L2"]):
-                print("L2按下")
-                BZ.keydown_PSControler()
-                # 等待按钮释放
-                while self.get_safe_button(key_map["PSB_L2"]):
-                    pygame.event.pump()
-                    time.sleep(0.01)
-
-            # R2
-            if self.get_safe_button(key_map["PSB_R2"]):
-                print("R2按下")
-                BZ.keydown_PSControler()
-                # 等待按钮释放
-                while self.get_safe_button(key_map["PSB_R2"]):
-                    pygame.event.pump()
-                    time.sleep(0.01)
-            
-            # L3
-            if self.get_safe_button(key_map["PSB_L3"]):
-                print("L3按下")
-                BZ.keydown_PSControler()
-                # 等待按钮释放
-                while self.get_safe_button(key_map["PSB_L3"]):
-                    pygame.event.pump()
-                    time.sleep(0.01)
-            
-            # R3 重置舵机
-            if self.get_safe_button(key_map["PSB_R3"]):
+            r3_pressed = self.get_safe_button(key_map["PSB_R3"])
+            if self._pressed_edge("r3", r3_pressed):
                 print("R3按下: 重置舵机")
                 BZ.keydown_PSControler()
-                if self.shield:  # 模拟模式
-                    self.servo_ctrl.reset_servos()
-                    # 重置速度
-                    self.target_speed = {1: 0, 2: 0}
-                    self.current_speed = {1: 0, 2: 0}
-                # 等待按钮释放
-                while self.get_safe_button(key_map["PSB_R3"]):
-                    pygame.event.pump()
-                    time.sleep(0.01)
-            
-            # Y - 使用边缘检测
-            if self.get_safe_button(key_map["PSB_Y"]):
-                print("Y按下")
-                BZ.keydown_PSControler()
-                # 等待按钮释放
-                while self.get_safe_button(key_map["PSB_Y"]):
-                    pygame.event.pump()
-                    time.sleep(0.01)
-            
-            # B - 使用边缘检测
-            if self.get_safe_button(key_map["PSB_B"]):
-                print("B按下")
-                BZ.keydown_PSControler()
-                # 等待按钮释放
-                while self.get_safe_button(key_map["PSB_B"]):
-                    pygame.event.pump()
-                    time.sleep(0.01)
-            
-            # A - 使用边缘检测
-            if self.get_safe_button(key_map["PSB_A"]):
-                print("A按下")
-                BZ.keydown_PSControler()
-                # 等待按钮释放
-                while self.get_safe_button(key_map["PSB_A"]):
-                    pygame.event.pump()
-                    time.sleep(0.01)
-            
-            # X - 使用边缘检测
-            if x_pressed:
-                print("X按下")
-                BZ.keydown_PSControler()
-                # 等待按钮释放
-                while self.get_safe_button(key_map["PSB_X"]):
-                    pygame.event.pump()
-                    time.sleep(0.01)
+                self.servo_ctrl.reset_servos()
+                self.target_speed = {1: 0, 2: 0}
+                self.current_speed = {1: 0, 2: 0}
 
-            hat_x, hat_y = self.js.get_hat(0)
-            """处理方向键输入"""
-            # 方向键控制（数字模式）
-            if hat_y == 1:  # 上
-                BZ.keydown_PSControler()
-                while hat_y == 1:
-                    hat_x, hat_y = self.js.get_hat(0)
-                    pygame.event.pump()
-                    time.sleep(0.01)
-            elif hat_y == -1:  # 下
-                BZ.keydown_PSControler()
-                while hat_y == -1:
-                    hat_x, hat_y = self.js.get_hat(0)
-                    pygame.event.pump()
-                    time.sleep(0.01)
-            else:
-                pass
-            
-            if hat_x == -1:  # 左
-                BZ.keydown_PSControler()
-                while hat_x == -1:
-                    hat_x, hat_y = self.js.get_hat(0)
-                    pygame.event.pump()
-                    time.sleep(0.01)
-            elif hat_x == 1:  # 右
-                BZ.keydown_PSControler()
-                while hat_x == 1:
-                    hat_x, hat_y = self.js.get_hat(0)
-                    pygame.event.pump()
-                    time.sleep(0.01)
-            else:
-                pass
+            for name, pressed in (
+                ("y", y_pressed), ("b", b_pressed),
+                ("a", a_pressed), ("x", x_pressed),
+            ):
+                if self._pressed_edge(name, pressed):
+                    print(f"{name.upper()}按下")
+                    BZ.keydown_PSControler()
+
+            hat = self.js.get_hat(0) if self.js.get_numhats() else (0, 0)
+            if hat != self.last_hat:
+                if hat != (0, 0):
+                    BZ.keydown_PSControler()
+                self.last_hat = hat
             
         except Exception as e:
             print(f"按钮处理错误: {e}")
@@ -776,7 +967,8 @@ class PS2Controller:
             else:
                 if self.connected:
                     self.connected = False
-                    self.chassis_ctrl.stop()
+                    if not self._cancel_heading_reset("手柄断开"):
+                        self.chassis_ctrl.stop()
                     self.l1_pressed = False
                     self.r1_pressed = False
                     self.shoulder_turn_state = None
@@ -798,12 +990,17 @@ class PS2Controller:
                     self.calibration_monitor is not None
                     and self.calibration_monitor.is_alive()
                 )
-                if self.shield and not calibrating:
-                    current_Lx = self.js.get_axis(self.axis_mapping["left_x"])
-                    current_Ly = self.js.get_axis(self.axis_mapping["left_y"])
-                    current_Rx = self.js.get_axis(self.axis_mapping["right_x"])
-                    current_Ry = self.js.get_axis(self.axis_mapping["right_y"])
+                resetting_heading = (
+                    self.heading_reset_monitor is not None
+                    and self.heading_reset_monitor.is_alive()
+                )
+                current_Lx = self.js.get_axis(self.axis_mapping["left_x"])
+                current_Ly = self.js.get_axis(self.axis_mapping["left_y"])
+                current_Rx = self.js.get_axis(self.axis_mapping["right_x"])
+                current_Ry = self.js.get_axis(self.axis_mapping["right_y"])
+                if not calibrating and not resetting_heading:
                     self.process_left_joystick(current_Lx, current_Ly)
+                if not self.brake_pressed:
                     self.process_right_joystick(current_Rx, current_Ry)
                 
                 # 更新舵机平滑速度
