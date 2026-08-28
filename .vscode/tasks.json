@@ -20,6 +20,25 @@
             "problemMatcher": []
         },
         {
+            "label": "清理",
+            "type": "shell",
+            "icon": {
+                "id": "trash",
+                "tooltip": "清理项目缓存"
+            },
+            "command": "cmd",
+            "args": [
+                "/c",
+                "for /r . %i in (__pycache__) do @if exist \"%i\" rd /s /q \"%i\" && for /r . %j in (*.pyc) do @del /q \"%j\""
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "日志",
             "type": "shell",
             "icon": {

@@ -6,9 +6,15 @@ import time
 import RPi.GPIO as GPIO
 import subprocess
 import re
-import subprocess
+import os
 import platform
 from media.config import *
+
+_online_cache = {
+    "value": False,
+    "checked_at": 0.0,
+    "fail_count": 0,
+}
 
 def setup_gpio():
     """初始化GPIO引脚"""
@@ -132,13 +138,72 @@ def get_core_info():
     else:
         return "未知", "0.0"
     
-def get_online(timeout=1):
-    """检测网络状态的最快方法"""
+def _tcp_probe(host, port, timeout):
     try:
-        socket.create_connection(("8.8.8.8", 53), timeout=timeout)
-        return True
-    except (socket.timeout, ConnectionRefusedError, OSError):
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
         return False
+
+def _has_usable_ipv4():
+    """本机有可用 IPv4 就认为局域网基本可用，不强依赖公网 DNS。"""
+    try:
+        output = subprocess.check_output(
+            ["ip", "-o", "-4", "addr", "show", "scope", "global"],
+            stderr=subprocess.DEVNULL,
+            timeout=0.5,
+        ).decode("utf-8", errors="ignore")
+        for match in re.finditer(r"\binet\s+(\d+(?:\.\d+){3})/", output):
+            if is_valid_ip(match.group(1)):
+                return True
+    except Exception:
+        pass
+    return False
+
+def _has_default_route():
+    try:
+        output = subprocess.check_output(
+            ["ip", "route", "show", "default"],
+            stderr=subprocess.DEVNULL,
+            timeout=0.5,
+        ).decode("utf-8", errors="ignore").strip()
+        return bool(output)
+    except Exception:
+        return False
+
+def get_online(timeout=1):
+    """检测网络状态：先看本地链路，再多目标 TCP 探测，并用短缓存防抖。"""
+    now = time.monotonic()
+    if now - _online_cache["checked_at"] < 2.0:
+        return _online_cache["value"]
+
+    try:
+        timeout = max(0.15, min(float(timeout), 2.0))
+    except Exception:
+        timeout = 1.0
+
+    local_online = _has_usable_ipv4()
+    routed = _has_default_route()
+    probe_timeout = max(0.15, timeout / 2.0)
+    internet_online = any(
+        _tcp_probe(host, port, probe_timeout)
+        for host, port in (
+            ("223.5.5.5", 53),
+            ("1.1.1.1", 53),
+            ("8.8.8.8", 53),
+        )
+    )
+
+    online = internet_online or (local_online and routed)
+    if online:
+        _online_cache["fail_count"] = 0
+        _online_cache["value"] = True
+    else:
+        _online_cache["fail_count"] += 1
+        if _online_cache["fail_count"] >= 2:
+            _online_cache["value"] = False
+    _online_cache["checked_at"] = now
+    return _online_cache["value"]
 
 def log(level, *info):
     """日志记录"""
