@@ -15,9 +15,11 @@ from tcarkit.depends.tcar_view import CameraReceiver, UDPReceiver
 
 
 class VisionPage(QWidget):
-    MAG_SYNC_WINDOW_S = 3.0
+    MAG_SYNC_WINDOW_S = 1.5
     MAG_RESYNC_INTERVAL_S = 15.0
-    MAG_SYNC_VALID_S = 30.0
+    MAG_SYNC_VALID_S = 45.0
+    MAG_SYNC_MIN_SAMPLES = 12
+    MAG_SYNC_MIN_CONFIDENCE = 0.90
 
     def __init__(self, ip, parent=None):
         super().__init__(parent)
@@ -158,14 +160,18 @@ class VisionPage(QWidget):
             self.mag_sync_started = now
         self.mag_sync_samples.append((magnetic_heading - gyro_yaw) % 360.0)
         if (now - self.mag_sync_started < self.MAG_SYNC_WINDOW_S
-                or len(self.mag_sync_samples) < 30):
+                or len(self.mag_sync_samples) < self.MAG_SYNC_MIN_SAMPLES):
             return
 
         candidate, confidence = self._circular_mean(self.mag_sync_samples)
-        accepted = confidence >= 0.96
+        accepted = confidence >= self.MAG_SYNC_MIN_CONFIDENCE
         if accepted and self.heading_offset is not None:
             error = (candidate - self.heading_offset + 180.0) % 360.0 - 180.0
-            accepted = abs(error) <= 25.0
+            # A long-running gyro can legitimately drift farther than the old
+            # 25-degree gate. Magnetic samples have already passed a coherent
+            # multi-second circular check, so allow a re-anchor while still
+            # rejecting a near-opposite disturbed field.
+            accepted = abs(error) <= 90.0
         if accepted:
             if self.heading_offset is None:
                 self.heading_offset = candidate
