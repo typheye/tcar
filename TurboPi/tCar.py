@@ -1442,7 +1442,7 @@ class SensorServer:
     DESKTOP_SERVICES_TOGGLE_COMMAND = b'desktop_services_toggle'
     CAMERA_PAN_PREFIX = b'camera_pan:'
 
-    def __init__(self, ip='192.168.66.3', port=8888, sonar=None, battery_reader=None,
+    def __init__(self, ip='0.0.0.0', port=8888, sonar=None, battery_reader=None,
                  desktop_services_callback=None):
         self.ip = ip
         self.port = port
@@ -1455,9 +1455,7 @@ class SensorServer:
             self.sock.bind((ip, port))
         except OSError as exc:
             self.sock.close()
-            raise RuntimeError(
-                f"UDP {ip}:{port} is already in use; stop the existing smpu.py instance"
-            ) from exc
+            raise RuntimeError(f"Cannot bind UDP {ip}:{port}: {exc}") from exc
         self.sock.settimeout(0.1)
         self.sensor_lock = threading.Lock()
         self.calibration_lock = threading.Lock()
@@ -1781,7 +1779,7 @@ class SensorServer:
 class TCarService:
     """Lifecycle wrapper used by TurboPi.py."""
 
-    def __init__(self, ip='192.168.66.3', port=8888, sonar=None, battery_reader=None,
+    def __init__(self, ip='0.0.0.0', port=8888, sonar=None, battery_reader=None,
                  desktop_services_callback=None):
         self.ip = ip
         self.port = port

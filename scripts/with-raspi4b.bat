@@ -18,9 +18,17 @@ REM ============================================================================
 
 setlocal enabledelayedexpansion
 
-set IP=192.168.66.3
 set BASE_DIR=%~dp0..
 set TARGET_DIR=/home/pi
+
+REM Discover the current 4B address from the car router. The Core host may
+REM receive a different DHCP address after every reboot.
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$r=Invoke-RestMethod -TimeoutSec 3 'http://192.168.66.1/test'; ($r.devices | Where-Object name -eq 'Core host' | Select-Object -First 1).ip"`) do set IP=%%i
+if not defined IP (
+  echo [ERROR] Core host was not found through http://192.168.66.1/test
+  exit /b 1
+)
+echo [INFO] Core host: %IP%
 
 if "%1"=="" goto show_help
 if "%1"=="--reset" goto update_restart
@@ -33,6 +41,8 @@ goto show_help
 
 :update_restart
 echo [1/2] Uploading files to Raspberry Pi...
+for /d /r "%BASE_DIR%\TurboPi" %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
+for /r "%BASE_DIR%\TurboPi" %%f in (*.pyc) do @if exist "%%f" del /q "%%f"
 scp -r "%BASE_DIR%\TurboPi" pi@%IP%:%TARGET_DIR%
 if !errorlevel! neq 0 (
   echo [ERROR] Upload failed!

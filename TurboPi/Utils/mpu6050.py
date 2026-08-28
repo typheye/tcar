@@ -224,7 +224,7 @@ class MPU6050:
 
 # ============ UDP 服务器 ============
 class MPU6050Server:
-    def __init__(self, ip='192.168.66.3', port=8888):
+    def __init__(self, ip='0.0.0.0', port=8888):
         self.ip = ip
         self.port = port
         self.mpu = MPU6050()

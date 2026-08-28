@@ -996,7 +996,7 @@ class MPU6050:
 
 # ============ UDP闂佸搫鐗嗙粔瀛樻叏閻旂厧闂?============
 class SensorServer:
-    def __init__(self, ip='192.168.66.3', port=8888):
+    def __init__(self, ip='0.0.0.0', port=8888):
         self.ip = ip
         self.port = port
         self.running = True
