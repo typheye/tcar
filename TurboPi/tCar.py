@@ -1407,8 +1407,12 @@ class SensorServer:
                 counters = values.split()
                 network_bytes += int(counters[0]) + int(counters[8])
 
+        with open('/proc/uptime', 'r') as uptime_file:
+            uptime_seconds = max(0.0, float(uptime_file.read().split()[0]))
+
         uname = os.uname()
         return {
+            'uptime': uptime_seconds,
             'cpu': cpu_percent,
             'cores': os.cpu_count() or 1,
             'memory': memory_percent,
