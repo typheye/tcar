@@ -181,7 +181,7 @@ class ChassisController:
         yaw_rate = -yaw_rate if direction == 1 else yaw_rate
         try:
             with self.command_lock:
-                if not self.drive_authorized or self.brake_engaged:
+                if not self.is_drive_enabled(bypass_throttle=bypass_throttle):
                     return False
                 self.chassis.set_velocity(0, 0, yaw_rate)
             return True
@@ -353,6 +353,7 @@ class PS2Controller:
         self.calibration_combo_cooldown_until = 0.0
         self.calibration_monitor = None
         self.calibration_cancel = threading.Event()
+        self.active_calibration_kind = None
         self.heading_reset_monitor = None
         self.heading_reset_cancel = threading.Event()
         self.heading_reset_command_lock = threading.Lock()
@@ -477,6 +478,7 @@ class PS2Controller:
             return
         self.chassis_ctrl.stop()
         self.calibration_cancel.clear()
+        self.active_calibration_kind = kind
         self.target_speed = {1: 0, 2: 0}
         self.current_speed = {1: 0, 2: 0}
         self.calibration_monitor = threading.Thread(
@@ -733,6 +735,7 @@ class PS2Controller:
         finally:
             if auto_turning:
                 self.chassis_ctrl.stop()
+            self.active_calibration_kind = None
     
     def update_smooth_speed(self):
         """更新舵机平滑速度"""
@@ -797,6 +800,15 @@ class PS2Controller:
     def process_buttons(self):
         """处理按钮输入"""
         try:
+            calibration_running = (
+                self.calibration_monitor is not None
+                and self.calibration_monitor.is_alive()
+            )
+            # SELECT+A owns all controller input until inertial calibration
+            # completes. It intentionally produces no button feedback.
+            if calibration_running and self.active_calibration_kind == "inertial":
+                return
+
             l2_pressed = self.get_safe_button(key_map["PSB_L2"])
             r2_pressed = self.get_safe_button(key_map["PSB_R2"])
             self.throttle_pressed = bool(l2_pressed)
@@ -823,6 +835,19 @@ class PS2Controller:
             l3_current = self.get_safe_button(key_map["PSB_L3"])
             now = time.monotonic()
 
+            # Exclusive background operations own the controller input state.
+            # R2 has already been handled above; every other button/chord is
+            # ignored without click feedback until the operation finishes.
+            if (self.heading_reset_monitor is not None
+                    and self.heading_reset_monitor.is_alive()):
+                if not l3_current:
+                    self.l3_pressed = False
+                return
+
+            if (self.calibration_monitor is not None
+                    and self.calibration_monitor.is_alive()):
+                return
+
             # SELECT+X toggles desktop camera/telemetry routes. Latch the
             # chord so a held button produces one request only.
             if select_pressed and x_pressed:
@@ -833,18 +858,6 @@ class PS2Controller:
             if self.desktop_combo_active:
                 if not select_pressed and not x_pressed:
                     self.desktop_combo_active = False
-                return
-
-            if (self.heading_reset_monitor is not None
-                    and self.heading_reset_monitor.is_alive()):
-                if not l2_pressed:
-                    self._cancel_heading_reset("L2油门释放")
-                if not l3_current:
-                    self.l3_pressed = False
-                return
-
-            if (self.calibration_monitor is not None
-                    and self.calibration_monitor.is_alive()):
                 return
 
             if select_pressed and start_pressed:
