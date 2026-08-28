@@ -50,9 +50,9 @@ if !errorlevel! neq 0 (
 )
 echo [2/2] Restarting tCar service...
 ssh pi@%IP% "sudo systemctl stop tcar.service"
-timeout /t 2 /nobreak >nul
+powershell -NoProfile -Command "Start-Sleep -Seconds 2"
 ssh pi@%IP% "sudo pkill -f 'python.*init.py' || true"
-timeout /t 1 /nobreak >nul
+powershell -NoProfile -Command "Start-Sleep -Seconds 1"
 ssh pi@%IP% "sudo systemctl start tcar.service"
 echo [SUCCESS] Service restarted.
 exit /b 0

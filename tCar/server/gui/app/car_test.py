@@ -2,6 +2,7 @@
 # 车体自检系统
 
 import time
+from server.rpc.core_host import get_core_host
 from server.gui.public.graphics import Graphics
 from server.gui.public.font_manager import fonts
 from server.gui.public.utils import press_key, wait_release, wait_press, get_core_status
@@ -62,7 +63,7 @@ class CarTest:
                             )
                             self.show_msg_screen(self.show_ui_msg, disable=self.show_ui_disable)
                             os.system(
-                                'ssh pi@192.168.166.100 "sudo python3 /home/pi/TurboPi/HiwonderSDK/hardware_test.py"'
+                                f'ssh pi@{get_core_host()} "sudo python3 /home/pi/TurboPi/HiwonderSDK/hardware_test.py"'
                             )
                             self.show_ui, self.show_ui_msg, self.show_ui_disable = 0, "", False
                         else:

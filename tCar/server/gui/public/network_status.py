@@ -5,6 +5,7 @@ import threading
 import time
 import urllib.request
 import json
+from server.rpc.core_host import get_core_host
 import subprocess
 from server.rpc.car_rpc import rpc_client
 from server.gui.public.utils import *
@@ -152,7 +153,7 @@ class NetworkStatus:
         if self.core_status:
             try:
                 # 使用subprocess执行ssh命令并获取输出
-                cmd = 'ssh -q -t pi@192.168.166.100 "sudo python3 /home/pi/TurboPi/Utils/battery.py"'
+                cmd = f'ssh -q -t pi@{get_core_host()} "sudo python3 /home/pi/TurboPi/Utils/battery.py"'
 
                 # 执行命令并捕获输出
                 result = subprocess.run(

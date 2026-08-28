@@ -2,13 +2,16 @@
 import requests
 import json
 import time
+from server.rpc.core_host import get_core_host
 
 class CarRPC:
-    def __init__(self, host="192.168.166.100", port=9030, endpoint="/"):
+    def __init__(self, host=None, port=9030, endpoint="/"):
         """
         初始化JSON-RPC 2.0客户端
         """
-        self.base_url = f"http://{host}:{port}{endpoint}"
+        self.host = host
+        self.port = port
+        self.endpoint = endpoint
         self.request_id = 0
         
         # 方法参数配置
@@ -137,9 +140,11 @@ class CarRPC:
             print(f"参数: {payload['params']}")
         
         try:
+            host = self.host or get_core_host()
+            base_url = f"http://{host}:{self.port}{self.endpoint}"
             # 发送POST请求
             response = requests.post(
-                self.base_url,
+                base_url,
                 json=payload,
                 headers={"Content-Type": "application/json"},
                 timeout=2

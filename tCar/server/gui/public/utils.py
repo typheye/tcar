@@ -9,6 +9,7 @@ import re
 import os
 import platform
 from media.config import *
+from server.rpc.core_host import get_core_host
 
 _online_cache = {
     "value": False,
@@ -107,7 +108,7 @@ def get_core_info():
     if get_core_status():
         try:
             # SSH连接信息
-            ssh_prefix = "ssh -o ConnectTimeout=1 -o BatchMode=yes pi@192.168.166.100"
+            ssh_prefix = f"ssh -o ConnectTimeout=1 -o BatchMode=yes pi@{get_core_host()}"
             
             def ssh_exec(cmd):
                 """执行SSH命令并返回结果"""
@@ -214,7 +215,10 @@ def log(level, *info):
 
 def get_core_status(timeout=0.05):
     """测试主机是否在线（防止卡死）"""
-    host = "192.168.166.100"
+    try:
+        host = get_core_host(timeout=max(0.2, timeout))
+    except Exception:
+        return False
     
     try:
         # Linux/Mac: -c 次数, -W 超时(秒)

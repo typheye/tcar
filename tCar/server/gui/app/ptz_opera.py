@@ -9,6 +9,7 @@ from server.gui.public.font_manager import fonts
 from server.gui.public.utils import press_key, wait_release, wait_press, get_core_status, log
 from media.config import *
 from server.gui.public.camera_manager import Camera
+from server.rpc.core_host import get_core_host
 
 
 class PTZOpera:
@@ -21,7 +22,7 @@ class PTZOpera:
         self.power_monitor = power_monitor
 
         # 创建相机实例
-        self.camera = Camera(camera_url="http://192.168.166.100:8080/?action=stream")
+        self.camera = Camera(camera_url=f"http://{get_core_host()}:8080/?action=stream")
 
         # UI状态
         self.show_ui = 0
@@ -52,7 +53,7 @@ class PTZOpera:
         direction_str = str(direction)
         active_str = "1" if active else "0"
 
-        cmd = f'''ssh pi@192.168.166.100 "sudo python3 /home/pi/TurboPi/HiwonderSDK/pyz_opera.py \
+        cmd = f'''ssh pi@{get_core_host()} "sudo python3 /home/pi/TurboPi/HiwonderSDK/pyz_opera.py \
 --servo {servo_id} \
 --control \
 --direction {direction_str} \
@@ -241,7 +242,7 @@ class PTZOpera:
 
         if get_core_status():
             os.system(
-                'ssh pi@192.168.166.100 "sudo python3 /home/pi/TurboPi/HiwonderSDK/servo_daemon.py" &'
+                f'ssh pi@{get_core_host()} "sudo python3 /home/pi/TurboPi/HiwonderSDK/servo_daemon.py" &'
             )
         else:
             self.show_ui, self.show_ui_msg, self.show_ui_disable = (
@@ -287,7 +288,7 @@ class PTZOpera:
                         wait_release(main_PIN)
                         if get_core_status():
                             os.system(
-                                'ssh pi@192.168.166.100 "sudo python3 /home/pi/TurboPi/HiwonderSDK/pyz_opera.py --reset"'
+                                f'ssh pi@{get_core_host()} "sudo python3 /home/pi/TurboPi/HiwonderSDK/pyz_opera.py --reset"'
                             )
                             for servo_id in [1, 2]:
                                 self.control_states[servo_id]["active"] = False
