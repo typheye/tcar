@@ -17,6 +17,8 @@ class ControlService:
         self.operation_cancel = threading.Event()
         self.status = "idle"
         self.desktop_toggle = None
+        self._last_hat = (0, 0)
+        self._right_servo_active = {1: False, 2: False}
 
     def start(self): self.motors.brake()
     def stop(self): self.motors.brake()
@@ -32,6 +34,11 @@ class ControlService:
             if self.busy:
                 return
             select = buttons.get("select", False)
+            self._button_feedback(previous_buttons, buttons, select)
+            hat = tuple(state.get("hat", (0, 0)))
+            if hat != (0, 0) and self._last_hat == (0, 0):
+                self.buzzer.pattern([(1, .012)])
+            self._last_hat = hat
             if select and self._edge(previous_buttons, buttons, "x"):
                 if self.desktop_toggle:
                     paused = self.desktop_toggle()
@@ -51,11 +58,15 @@ class ControlService:
             right_x, right_y = axes[2], axes[3]
             if self._edge(previous_buttons, buttons, "r3"):
                 self.servos.reset()
+                self._right_servo_active = {1: False, 2: False}
             else:
-                if abs(right_x) > 0.02:
-                    self.servos.set_pulse(2, self.servos.get_pulse(2) - int(right_x * 12), 40)
-                if abs(right_y) > 0.02:
-                    self.servos.set_pulse(1, self.servos.get_pulse(1) + int(right_y * 12), 40)
+                for servo_id, value in ((2, -right_x), (1, right_y)):
+                    active = abs(value) > 0.06
+                    if active:
+                        self.servos.set_velocity(servo_id, value)
+                    elif self._right_servo_active[servo_id]:
+                        self.servos.set_velocity(servo_id, 0.0)
+                    self._right_servo_active[servo_id] = active
 
             throttle = buttons.get("l2", False)
             if not throttle:
@@ -65,7 +76,7 @@ class ControlService:
                 direction = -1.0 if buttons.get("l1") else 1.0
                 self.motors.drive(0.0, 0.0, direction * 0.30); return
             x, y = axes[0], axes[1]
-            hat_x, hat_y = state.get("hat", (0, 0))
+            hat_x, hat_y = hat
             if self.mode == "analog":
                 # D-pad is feedback-only in analog mode.
                 if hat_x or hat_y:
@@ -81,6 +92,17 @@ class ControlService:
                 speed = 26.0 + ((magnitude - 0.06) / 0.94) ** 1.5 * 34.0
                 direction = math.degrees(math.atan2(-y, x)) % 360.0
                 self.motors.drive(speed, direction)
+
+    def _button_feedback(self, previous, current, select):
+        # L2/R2 intentionally have no sound. Calibration owns the buzzer and
+        # suppresses all normal key feedback while it is running.
+        for name in ("y", "b", "a", "x", "l1", "r1", "select", "start", "l3", "r3"):
+            if self._edge(previous, current, name):
+                duration = .05 if select and name in ("a", "b", "x", "start") else .012
+                self.buzzer.pattern([(1, duration)])
+        # D-pad is a real button surface even when it is feedback-only.
+        # Its edge is not represented in pygame's button array.
+
     @staticmethod
     def _edge(previous, current, name):
         return bool(current.get(name)) and not bool(previous.get(name))

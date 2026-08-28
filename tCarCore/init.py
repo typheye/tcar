@@ -16,7 +16,7 @@ from hardware.buzzer import Buzzer
 from hardware.motor import MotorController
 from hardware.mpu6050 import MPU6050
 from hardware.ps_controller import PSController
-from hardware.qmc5883l import QMC5883L
+from hardware.hmc5883l import HMC5883L
 from hardware.servo import ServoController
 from hardware.sonar import Sonar
 from hardware.video_device import VideoDevice
@@ -46,7 +46,7 @@ def main():
     sonar = lifecycle.add("sonar", Sonar())
     battery = lifecycle.add("battery", BatteryMonitor())
     mpu = lifecycle.add("MPU6050", MPU6050())
-    magnetometer = lifecycle.add("QMC5883L", QMC5883L())
+    magnetometer = lifecycle.add("HMC5883L", HMC5883L())
     video = lifecycle.add("video", VideoDevice())
 
     control = lifecycle.add(
@@ -63,6 +63,9 @@ def main():
     try:
         lifecycle.start()
         log.info("tCar Core initialized")
+        # Startup acknowledgement is intentionally emitted only after every
+        # calibration and service has completed successfully.
+        buzzer.pattern([(1, .08)])
         lifecycle.wait()
         return 0
     except Exception:
