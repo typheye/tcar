@@ -24,6 +24,7 @@ class MecanumChassis:
         self.minimum_motor_speed = 26
         self.relative_wheel_deadband = 0.08
         self._last_motor_commands = None
+        self._motor_write_lock = threading.RLock()
 
     def _motor_command(self, value):
         if abs(value) < 1e-9:
@@ -53,12 +54,15 @@ class MecanumChassis:
         ]
 
     def _write_motor_commands(self, commands, force=False):
-        commands = tuple(commands)
-        if not force and commands == self._last_motor_commands:
-            return
-        for motor_id, command in enumerate(commands, start=1):
-            Board.setMotor(motor_id, command)
-        self._last_motor_commands = commands
+        with self._motor_write_lock:
+            commands = tuple(commands)
+            if not force and commands == self._last_motor_commands:
+                return
+            # A stop is four I2C writes. Serialize the complete batch so an
+            # emergency brake cannot interleave with a turn/drive update.
+            for motor_id, command in enumerate(commands, start=1):
+                Board.setMotor(motor_id, command)
+            self._last_motor_commands = commands
 
     def reset_motors(self):
         self._write_motor_commands((0, 0, 0, 0), force=True)

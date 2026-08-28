@@ -26,7 +26,7 @@ key_map = {"PSB_Y": 0, "PSB_B": 1, "PSB_A": 2, "PSB_X": 3,
 SOCKET_PATH = "/tmp/servo_control.sock"
 SENSOR_SERVER_ADDRESS = ("192.168.66.3", 8888)
 HEADING_RESET_MIN_YAW_RATE = 0.15
-HEADING_RESET_TOLERANCE_DEG = 5.0
+HEADING_RESET_TOLERANCE_DEG = 2.0
 HEADING_RESET_PULSE_SECONDS = 0.07
 HEADING_RESET_BRAKE_SECONDS = 0.12
 HEADING_RESET_MAX_FINAL_PULSES = 4
@@ -85,9 +85,10 @@ class ChassisController:
             if (was_enabled and not self.drive_authorized) or self.brake_engaged:
                 self._stop_locked()
 
-    def is_drive_enabled(self):
+    def is_drive_enabled(self, bypass_throttle=False):
         with self.command_lock:
-            return self.drive_authorized and not self.brake_engaged
+            return (not self.brake_engaged
+                    and (bypass_throttle or self.drive_authorized))
 
     def emergency_stop(self):
         """Latch the brake and synchronously command all motors to zero."""
@@ -165,11 +166,11 @@ class ChassisController:
         except Exception as e:
             print(f"小车控制错误: {e}")
     
-    def turn(self, direction, yaw_rate=0.3):
+    def turn(self, direction, yaw_rate=0.3, bypass_throttle=False):
         """转向
         direction: 1=左转, -1=右转
         """
-        if not self.is_drive_enabled():
+        if not self.is_drive_enabled(bypass_throttle=bypass_throttle):
             return False
         if self.chassis is None:
             print(f"模拟: {'左' if direction == 1 else '右'}转")
@@ -331,6 +332,8 @@ class PS2Controller:
         
         # 控制模式
         self.control_mode = "analog"
+        # Exactly one of the two left-side drive inputs is active at a time.
+        self.left_stick_enabled = True
         
         # 摇杆轴映射
         self.axis_mapping = {
@@ -516,9 +519,8 @@ class PS2Controller:
             return
         if self.heading_reset_monitor and self.heading_reset_monitor.is_alive():
             return
-        if not self.chassis_ctrl.is_drive_enabled():
-            print("L3朝向复位需要持续按住L2油门")
-            BZ.init(0.08)
+        if not self.chassis_ctrl.is_drive_enabled(bypass_throttle=True):
+            print("L3朝向复位被R2急停锁定")
             return
         with self.heading_reset_command_lock:
             self.chassis_ctrl.stop()
@@ -562,7 +564,7 @@ class PS2Controller:
         try:
             while (RUNNING and not self.heading_reset_cancel.is_set()
                    and time.monotonic() < deadline):
-                if not self.chassis_ctrl.is_drive_enabled():
+                if not self.chassis_ctrl.is_drive_enabled(bypass_throttle=True):
                     self.heading_reset_cancel.set()
                     break
                 heading = self._read_gyro_heading()
@@ -605,7 +607,7 @@ class PS2Controller:
                         with self.heading_reset_command_lock:
                             if self.heading_reset_cancel.is_set() or not RUNNING:
                                 break
-                            if not self.chassis_ctrl.turn(direction, yaw_rate):
+                        if not self.chassis_ctrl.turn(direction, yaw_rate, bypass_throttle=True):
                                 self.heading_reset_cancel.set()
                                 break
                         last_command = command
@@ -674,7 +676,7 @@ class PS2Controller:
             last_phase = None
             while RUNNING and not self.calibration_cancel.is_set():
                 if (kind == "magnetometer"
-                        and not self.chassis_ctrl.is_drive_enabled()):
+                        and not self.chassis_ctrl.is_drive_enabled(bypass_throttle=True)):
                     self.calibration_cancel.set()
                     print("磁力校准停止: L2油门已释放或R2刹车已按下")
                     break
@@ -692,10 +694,10 @@ class PS2Controller:
                         # tCar integrates the calibrated Z gyro and ends this
                         # phase after one real 360-degree rotation.
                         if (self.calibration_cancel.is_set()
-                                or not self.chassis_ctrl.is_drive_enabled()):
+                                or not self.chassis_ctrl.is_drive_enabled(bypass_throttle=True)):
                             break
                         turn_rate = 0.30
-                        if not self.chassis_ctrl.turn(1, turn_rate):
+                        if not self.chassis_ctrl.turn(1, turn_rate, bypass_throttle=True):
                             self.calibration_cancel.set()
                             break
                         auto_turning = True
@@ -710,10 +712,10 @@ class PS2Controller:
                         desired_rate = 0.30
                     if desired_rate != turn_rate:
                         if (self.calibration_cancel.is_set()
-                                or not self.chassis_ctrl.is_drive_enabled()):
+                                or not self.chassis_ctrl.is_drive_enabled(bypass_throttle=True)):
                             break
                         turn_rate = desired_rate
-                        if not self.chassis_ctrl.turn(1, turn_rate):
+                        if not self.chassis_ctrl.turn(1, turn_rate, bypass_throttle=True):
                             self.calibration_cancel.set()
                             break
                 if phase == "complete":
@@ -821,15 +823,15 @@ class PS2Controller:
             l3_current = self.get_safe_button(key_map["PSB_L3"])
             now = time.monotonic()
 
-            # SELECT+Y toggles desktop camera/telemetry routes. Latch the
+            # SELECT+X toggles desktop camera/telemetry routes. Latch the
             # chord so a held button produces one request only.
-            if select_pressed and y_pressed:
+            if select_pressed and x_pressed:
                 if not self.desktop_combo_active:
                     self.desktop_combo_active = True
                     self._toggle_desktop_services()
                 return
             if self.desktop_combo_active:
-                if not select_pressed and not y_pressed:
+                if not select_pressed and not x_pressed:
                     self.desktop_combo_active = False
                 return
 
@@ -853,6 +855,7 @@ class PS2Controller:
                         if self.control_mode == "analog"
                         else "analog"
                     )
+                    self.left_stick_enabled = self.control_mode == "analog"
                     self.chassis_ctrl.stop()
                     mode_text = "四方向" if self.control_mode == "cardinal" else "连续"
                     print(f"左摇杆模式切换: {mode_text}")
@@ -863,15 +866,15 @@ class PS2Controller:
                     self.mode_combo_active = False
                 return
 
-            # SELECT+X remains intentionally unassigned. Latch it until both
-            # keys are released so it cannot leak into a normal X action.
+            # SELECT+Y remains intentionally unassigned. Latch it until both
+            # keys are released so it cannot leak into a normal Y action.
             if self.suppressed_combo_active is not None:
-                face_pressed = x_pressed
+                face_pressed = y_pressed
                 if not select_pressed and not face_pressed:
                     self.suppressed_combo_active = None
                 return
-            if select_pressed and x_pressed:
-                self.suppressed_combo_active = "x"
+            if select_pressed and y_pressed:
+                self.suppressed_combo_active = "y"
                 return
 
             # SELECT+A recalibrates inertial origin; SELECT+B performs the
@@ -905,10 +908,6 @@ class PS2Controller:
                 self.calibration_combo_active = combo_kind
                 self.calibration_combo_pending = None
                 self.calibration_combo_since = None
-                if combo_kind == "magnetometer" and not l2_pressed:
-                    print("SELECT + B磁力校准需要持续按住L2油门")
-                    BZ.init(0.08)
-                    return
                 if combo_kind == "inertial":
                     print("SELECT + A: 重新校准陀螺仪、姿态和初始朝向")
                 else:
@@ -959,7 +958,12 @@ class PS2Controller:
             hat = self.js.get_hat(0) if self.js.get_numhats() else (0, 0)
             previous_hat = self.last_hat
             self.last_hat = hat
-            if hat != (0, 0) and self.chassis_ctrl.is_drive_enabled():
+            if hat != previous_hat and hat != (0, 0) and self.left_stick_enabled:
+                # In analogue mode D-pad is feedback-only: acknowledge the
+                # press, but never route it to the chassis.
+                BZ.keydown_PSControler()
+            if (hat != (0, 0) and not self.left_stick_enabled
+                    and self.chassis_ctrl.is_drive_enabled()):
                 # D-pad is the discrete four-direction drive input. It is
                 # intentionally independent from the left-stick mode toggle.
                 hat_x, hat_y = hat
@@ -1028,7 +1032,7 @@ class PS2Controller:
                 current_Rx = self.js.get_axis(self.axis_mapping["right_x"])
                 current_Ry = self.js.get_axis(self.axis_mapping["right_y"])
                 if (not calibrating and not resetting_heading
-                        and self.last_hat == (0, 0)):
+                        and self.left_stick_enabled):
                     self.process_left_joystick(current_Lx, current_Ly)
                 if not self.brake_pressed:
                     self.process_right_joystick(current_Rx, current_Ry)
