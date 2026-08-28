@@ -1,14 +1,14 @@
 @echo off
 REM ============================================================================
 REM * @file    with-raspi4b.bat
-REM * @author  TurboPi Development Team
+REM * @author  tCarCore Development Team
 REM * @brief   Raspberry Pi deployment script for Windows
 REM *          Provides commands for uploading files, managing services,
-REM *          and SSH access to the Raspberry Pi running TurboPi system.
+REM *          and SSH access to the Raspberry Pi running tCarCore system.
 REM ============================================================================
 REM * @attention
 REM *
-REM * Copyright (c) 2026 TurboPi Development Team. All rights reserved.
+REM * Copyright (c) 2026 tCarCore Development Team. All rights reserved.
 REM *
 REM * This software is licensed under terms that can be found in the LICENSE file
 REM * in the root directory of this software component.
@@ -41,20 +41,20 @@ goto show_help
 
 :update_restart
 echo [1/2] Uploading files to Raspberry Pi...
-for /d /r "%BASE_DIR%\TurboPi" %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
-for /r "%BASE_DIR%\TurboPi" %%f in (*.pyc) do @if exist "%%f" del /q "%%f"
-scp -r "%BASE_DIR%\TurboPi" pi@%IP%:%TARGET_DIR%
+for /d /r "%BASE_DIR%\tCarCore" %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
+for /r "%BASE_DIR%\tCarCore" %%f in (*.pyc) do @if exist "%%f" del /q "%%f"
+scp -r "%BASE_DIR%\tCarCore" pi@%IP%:%TARGET_DIR%
 if !errorlevel! neq 0 (
   echo [ERROR] Upload failed!
   exit /b 1
 )
-ssh pi@%IP% "rm -f ~/TurboPi/Utils/dmp_firmware.bin"
-echo [2/2] Restarting TurboPi service...
-ssh pi@%IP% "sudo systemctl stop turbopi.service"
+ssh pi@%IP% "rm -f ~/tCarCore/Utils/dmp_firmware.bin"
+echo [2/2] Restarting tCarCore service...
+ssh pi@%IP% "sudo systemctl stop tcar-core.service"
 ping 127.0.0.1 -n 3 >nul
 ssh pi@%IP% "sudo pkill -f 'python.*init.py' || true"
 ping 127.0.0.1 -n 2 >nul
-ssh pi@%IP% "sudo systemctl start turbopi.service"
+ssh pi@%IP% "sudo systemctl start tcar-core.service"
 echo [SUCCESS] Service restarted.
 exit /b 0
 
@@ -75,17 +75,17 @@ exit /b 0
 
 :format
 echo Formatting Raspberry Pi directory...
-ssh pi@%IP% "sudo rm -rf ~/TurboPi"
+ssh pi@%IP% "sudo rm -rf ~/tCarCore"
 echo [SUCCESS] Directory removed.
 exit /b 0
 
 :view_log
 echo ================================
-echo Viewing turbopi.service real-time logs
+echo Viewing tcar-core.service real-time logs
 echo ================================
 echo Press Ctrl+C to exit log view
 echo ================================
-ssh pi@%IP% "sudo journalctl -u turbopi.service -f"
+ssh pi@%IP% "sudo journalctl -u tcar-core.service -f"
 exit /b 0
 
 :show_help
@@ -96,11 +96,11 @@ echo.
 echo Usage: with-raspi4b.bat [OPTION]
 echo.
 echo Options:
-echo  --reset  Upload and restart TurboPi service
+echo  --reset  Upload and restart tCarCore service
 echo  --ssh    Open SSH terminal to Raspberry Pi
-echo  --log    View turbopi.service real-time logs
+echo  --log    View tcar-core.service real-time logs
 echo  --reboot Reboot Raspberry Pi
-echo  --format Remove ~/turbopi directory on Raspberry Pi
+echo  --format Remove ~/tCarCore directory on Raspberry Pi
 echo  --help   Show this help message
 echo.
 echo Example: with-raspi4b.bat --reset
