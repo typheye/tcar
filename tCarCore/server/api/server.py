@@ -77,7 +77,7 @@ class APIServer:
                     self.send_response(200); self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame"); self.end_headers()
                     sequence = -1
                     try:
-                        while owner.running:
+                        while owner.running and not owner.paused:
                             current, frame = owner.video.latest()
                             if frame is None or current == sequence: time.sleep(.005); continue
                             sequence = current; ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 78])

@@ -10,7 +10,7 @@ except ImportError: pygame = None
 
 
 BUTTONS = ("y", "b", "a", "x", "l1", "r1", "l2", "r2",
-           "select", "start", "l3", "r3")
+           "select", "start", "l3", "r3", "mode")
 
 
 class PSController:

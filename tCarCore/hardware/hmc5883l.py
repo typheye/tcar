@@ -17,8 +17,13 @@ def wrap_angle(value):
 
 class HMC5883L:
     ADDRESS = 0x1E
-    AXIS_MAP = (1, 2, 0)
-    AXIS_SIGN = (1.0, -1.0, -1.0)
+    # HMC5883L read_raw() already normalizes the register order to X/Y/Z.
+    # The installed board turns around its physical X/Y plane; Z is vertical.
+    # The previous QMC-era Y/Z/X mapping calibrated one horizontal axis
+    # against vertical Z and therefore saw almost no coverage during a turn.
+    AXIS_MAP = (0, 1, 2)
+    AXIS_SIGN = (1.0, 1.0, -1.0)
+    HEADING_OFFSET_DEG = 90.0
 
     def __init__(self, bus=shared_i2c, calibration_path=None):
         self.bus = bus
@@ -81,7 +86,7 @@ class HMC5883L:
         if not (self.field_radius * 0.55 <= strength <= self.field_radius * 1.8):
             return None
         # This is the only N/S mounting compensation in the whole stack.
-        heading = math.degrees(math.atan2(y, -x)) % 360.0
+        heading = self._heading_from_xy(x, y)
         self.samples.append(heading)
         center = heading if self.last_heading is None else self.last_heading
         deltas = sorted(wrap_angle(value - center) for value in self.samples)
@@ -127,6 +132,40 @@ class HMC5883L:
         self.last_heading = None
         self._save(turned)
         return True
+
+    def confirm_stable_heading(self, seconds=1.5, min_samples=20,
+                               min_confidence=0.88):
+        """Validate and seed the heading immediately after calibration."""
+        headings = []
+        deadline = time.monotonic() + float(seconds)
+        while time.monotonic() < deadline:
+            values = self.read_calibrated()
+            if values is not None:
+                x, y, _ = values
+                strength = math.hypot(x, y)
+                if (self.field_radius * 0.55 <= strength
+                        <= self.field_radius * 1.8):
+                    headings.append(self._heading_from_xy(x, y))
+            time.sleep(0.03)
+        if len(headings) < int(min_samples):
+            return None
+        sx = sum(math.cos(math.radians(value)) for value in headings)
+        sy = sum(math.sin(math.radians(value)) for value in headings)
+        confidence = math.hypot(sx, sy) / len(headings)
+        if confidence < float(min_confidence):
+            return None
+        heading = math.degrees(math.atan2(sy, sx)) % 360.0
+        self.samples.clear()
+        self.samples.append(heading)
+        self.last_heading = heading
+        return heading
+
+    @classmethod
+    def _heading_from_xy(cls, x, y):
+        # The HMC board's connector orientation rotates its physical X/Y
+        # frame 90 degrees relative to the tCar nose. Keep this one mounting
+        # correction in the 4B driver: W must remain W, not appear as S.
+        return (math.degrees(math.atan2(y, -x)) + cls.HEADING_OFFSET_DEG) % 360.0
 
     def _load(self):
         try:
