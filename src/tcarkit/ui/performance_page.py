@@ -79,7 +79,6 @@ class PerformancePage(QWidget):
         self.last_snapshot = None
         self.last_latency = None
         self.running = True
-        self.active = True
         self.stop_event = threading.Event()
         self.performance_thread = threading.Thread(
             target=self._performance_loop,
@@ -99,11 +98,14 @@ class PerformancePage(QWidget):
         root.setContentsMargins(10, 10, 10, 10)
 
         cards = QHBoxLayout()
+        self.uptime = MetricCard("Uptime", " s")
         self.cpu = MetricCard("CPU", "%")
         self.memory = MetricCard("Memory", "%")
         self.latency = MetricCard("Latency", " ms")
         self.network = MetricCard("Network", " MB/s")
-        for card in (self.latency, self.cpu, self.memory, self.network):
+        for card in (
+            self.uptime, self.latency, self.cpu, self.memory, self.network,
+        ):
             cards.addWidget(card)
         root.addLayout(cards)
 
@@ -134,6 +136,7 @@ class PerformancePage(QWidget):
         now = time.monotonic()
         cpu = float(snapshot.get("cpu", float("nan"))) if snapshot else float("nan")
         memory = float(snapshot.get("memory", float("nan"))) if snapshot else float("nan")
+        uptime = float(snapshot.get("uptime", float("nan"))) if snapshot else float("nan")
         total_bytes = int(snapshot.get("network_bytes", 0)) if snapshot else 0
         if snapshot and self.last_network_bytes is not None:
             interval = max(0.001, now - self.last_network_time)
@@ -144,8 +147,10 @@ class PerformancePage(QWidget):
             self.last_network_bytes = total_bytes
             self.last_network_time = now
 
-        self.cpu.set_value("--" if snapshot is None else f"{cpu:.1f}",
-                           "" if snapshot is None else f"{snapshot.get('cores', '--')} cores")
+        self.uptime.set_value(
+            "--" if snapshot is None or uptime != uptime else f"{uptime:.0f}"
+        )
+        self.cpu.set_value("--" if snapshot is None else f"{cpu:.1f}")
         self.memory.set_value("--" if snapshot is None else f"{memory:.1f}")
         self.latency.set_value("--" if latency is None else f"{latency:.1f}")
         self.network.set_value(
@@ -188,9 +193,6 @@ class PerformancePage(QWidget):
 
     def _performance_loop(self):
         while self.running:
-            if not self.active:
-                self.stop_event.wait(0.1)
-                continue
             snapshot, latency = self._poll_performance()
             with self.performance_lock:
                 self.last_snapshot = snapshot
@@ -198,12 +200,10 @@ class PerformancePage(QWidget):
             self.stop_event.wait(1.0)
 
     def set_active(self, active):
-        self.active = bool(active)
+        # Performance sampling and history remain live across tab switches.
+        # Refresh once on activation so the newly exposed plot is painted now.
         if active:
-            self.timer.start(1000)
             self.refresh()
-        else:
-            self.timer.stop()
 
     def stop(self):
         self.running = False
