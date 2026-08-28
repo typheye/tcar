@@ -41,5 +41,6 @@ class HomePage(QWidget):
         )
 
     def stop(self):
+        self.view.timer.stop()
         self.receiver.stop()
-        self.receiver.wait(1500)
+        return (self.receiver,)

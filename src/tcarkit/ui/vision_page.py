@@ -510,6 +510,5 @@ class VisionPage(QWidget):
         self.hud_timer.stop()
         self.frame_timer.stop()
         self.receiver.stop()
-        self.receiver.wait(1500)
         self.camera.stop()
-        self.camera.wait(2500)
+        return self.receiver, self.camera

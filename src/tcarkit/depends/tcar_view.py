@@ -115,7 +115,9 @@ class UDPReceiver(QThread):
                             self.connected = False
                             self.connection_status.emit(False)
                 except socket.error:
-                    time.sleep(1)
+                    if not self.running:
+                        break
+                    self.msleep(100)
         except Exception as e:
             print(f"闂傚倸鍊搁崐鎼佸磹閹间礁纾归柣鎴ｅГ閸婂潡鏌ㄩ弮鍫熸殰闁稿鎸剧划顓炩槈濡顦╅梺绋款儜缁绘繈寮婚弴鐔虹闁绘劦鍓氶悵锕傛⒑? {e}")
         finally:
@@ -148,6 +150,8 @@ class CameraReceiver(QThread):
         self._latest_frame = None
         self._latest_sequence = 0
         self._latest_delay_ms = 0.0
+        self._response_lock = threading.Lock()
+        self._response = None
 
     def _set_connected(self, connected):
         if self.connected != connected:
@@ -172,6 +176,8 @@ class CameraReceiver(QThread):
                     },
                 )
                 with urllib.request.urlopen(request, timeout=1.5) as response:
+                    with self._response_lock:
+                        self._response = response
                     buffer = bytearray()
                     last_emit = 0.0
                     frame_started = time.monotonic()
@@ -261,7 +267,11 @@ class CameraReceiver(QThread):
                             buffer.clear()
             except (OSError, ValueError, urllib.error.URLError):
                 self._set_connected(False)
-                self.msleep(250)
+                if self.running:
+                    self.msleep(250)
+            finally:
+                with self._response_lock:
+                    self._response = None
 
         self._set_connected(False)
 
@@ -273,6 +283,14 @@ class CameraReceiver(QThread):
 
     def stop(self):
         self.running = False
+        self.active = False
+        with self._response_lock:
+            response = self._response
+        if response is not None:
+            try:
+                response.close()
+            except (OSError, ValueError):
+                pass
 
     def set_active(self, active):
         self.active = bool(active)

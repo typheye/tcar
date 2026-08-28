@@ -80,6 +80,7 @@ class PerformancePage(QWidget):
         self.last_latency = None
         self.running = True
         self.active = True
+        self.stop_event = threading.Event()
         self.performance_thread = threading.Thread(
             target=self._performance_loop,
             name="tcarkit-performance",
@@ -188,13 +189,13 @@ class PerformancePage(QWidget):
     def _performance_loop(self):
         while self.running:
             if not self.active:
-                time.sleep(0.1)
+                self.stop_event.wait(0.1)
                 continue
             snapshot, latency = self._poll_performance()
             with self.performance_lock:
                 self.last_snapshot = snapshot
                 self.last_latency = latency
-            time.sleep(1.0)
+            self.stop_event.wait(1.0)
 
     def set_active(self, active):
         self.active = bool(active)
@@ -206,8 +207,9 @@ class PerformancePage(QWidget):
 
     def stop(self):
         self.running = False
+        self.stop_event.set()
         self.timer.stop()
-        self.performance_thread.join(timeout=1.0)
+        return (self.performance_thread,)
 
     def set_theme(self, dark):
         for graph in (

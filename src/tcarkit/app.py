@@ -5,6 +5,7 @@
 import os
 import socket
 import sys
+import time
 import ipaddress
 import json
 import urllib.error
@@ -547,6 +548,12 @@ class TCarKitWindow(QMainWindow):
                 self._add_close_button(index)
 
     def closeEvent(self, event):
+        if getattr(self, "_shutdown_complete", False):
+            event.accept()
+            return
+        if getattr(self, "_shutdown_started", False):
+            event.ignore()
+            return
         answer = QMessageBox.question(
             self, "tCarKit", "Are you sure you want to exit?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
@@ -559,10 +566,48 @@ class TCarKitWindow(QMainWindow):
             if self.tabs.tabText(index) != "Home"
         ]
         self._settings.setValue("session/tabs", names)
-        self.home.stop()
-        self.vision.stop()
-        self.performance.stop()
-        event.accept()
+        self._shutdown_started = True
+        self.hide()
+        QApplication.setQuitOnLastWindowClosed(False)
+        workers = []
+        workers.extend(self.home.stop())
+        workers.extend(self.vision.stop())
+        workers.extend(self.performance.stop())
+        self._shutdown_workers = workers
+        self._shutdown_deadline = time.monotonic() + 1.75
+        self._shutdown_timer = QTimer(self)
+        self._shutdown_timer.setInterval(20)
+        self._shutdown_timer.timeout.connect(self._finish_shutdown)
+        self._shutdown_timer.start()
+        event.ignore()
+
+    def _finish_shutdown(self):
+        running = []
+        for worker in self._shutdown_workers:
+            if hasattr(worker, "isRunning"):
+                if worker.isRunning():
+                    running.append(worker)
+            elif worker.is_alive():
+                running.append(worker)
+        if running and time.monotonic() < self._shutdown_deadline:
+            return
+        # A camera connect can remain inside the standard-library URL opener
+        # until its 1.5 s timeout. At the deadline, terminate only residual Qt
+        # receivers during final process shutdown to avoid destroying a live
+        # QThread object.
+        for worker in running:
+            if hasattr(worker, "terminate"):
+                worker.terminate()
+                worker.wait(100)
+        self._shutdown_timer.stop()
+        self._shutdown_complete = True
+        self._settings.sync()
+        QApplication.setQuitOnLastWindowClosed(True)
+        self.close()
+        # All application workers are stopped above. Qt/OpenGL can otherwise
+        # remain in native teardown after the event loop has ended, leaving a
+        # headless tCarKit process behind for several seconds.
+        os._exit(0)
 
 
 def main():
