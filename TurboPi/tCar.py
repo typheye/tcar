@@ -338,6 +338,56 @@ class Magnetometer:
             return None
         return wrap_angle((heading - self.yaw_zero) * self.yaw_sign)
 
+    def confirm_stable_heading(self, seconds=2.0, min_samples=20,
+                               min_confidence=0.90):
+        """Confirm that a new calibration produces a usable heading.
+
+        This must run after the chassis has stopped.  A calibration is not
+        considered complete merely because min/max values were written: the
+        live field must also yield a coherent circular heading.  Seed the
+        display filter from that result so the next telemetry packet is
+        immediately finite instead of spending another long window warming
+        up.
+        """
+        if not self.available or not self.calibrated:
+            return None
+        headings = []
+        deadline = time.monotonic() + max(0.2, float(seconds))
+        while time.monotonic() < deadline:
+            mag = self.read_calibrated()
+            if mag is not None:
+                mx, my, _ = mag
+                strength = math.hypot(mx, my)
+                if (self._field_is_valid(strength)
+                        and abs(mx) + abs(my) >= 1e-6):
+                    headings.append(self._heading_from_xy(mx, my))
+            time.sleep(0.02)
+        if len(headings) < int(min_samples):
+            print(
+                "Mag heading confirmation failed: "
+                f"only {len(headings)} valid samples"
+            )
+            return None
+        sx = sum(math.cos(math.radians(value)) for value in headings)
+        sy = sum(math.sin(math.radians(value)) for value in headings)
+        confidence = math.hypot(sx, sy) / len(headings)
+        if confidence < float(min_confidence):
+            print(
+                "Mag heading confirmation failed: "
+                f"confidence {confidence:.3f}"
+            )
+            return None
+        heading = math.degrees(math.atan2(sy, sx)) % 360.0
+        self._reset_heading_filter()
+        self.last_heading = heading
+        self.heading_filter_time = time.monotonic()
+        self.heading_samples.append(heading)
+        print(
+            f"Mag heading ready: {heading:.1f} deg "
+            f"({len(headings)} samples, confidence {confidence:.3f})"
+        )
+        return heading
+
     def calibrate_hard_soft_iron(self, seconds=30, yaw_rate_reader=None, progress_callback=None):
         if not self.available:
             print("Mag calibration failed: magnetometer not found")
@@ -1148,24 +1198,31 @@ class MPU6050:
             raise RuntimeError("magnetometer calibration failed")
 
         # Tell the controller to stop first, then allow the chassis to settle
-        # before publishing completion. Inertial zero remains untouched.
+        # before accepting/publishing the new magnetic reference. Inertial
+        # zero remains untouched.
         notify("stopping")
         time.sleep(0.75)
-        self.last_mag_debug = None
+        heading = self.mag.confirm_stable_heading()
+        if heading is None:
+            raise RuntimeError("magnetometer heading is not stable after calibration")
+        self.last_mag_debug = self.mag.diagnostic()
         notify("complete")
         return True
 
     def _fuse_mag_yaw(self, pitch, roll, yaw, qw, qx, qy, qz, gz_dps=0.0):
-        # The magnetometer is diagnostic-only.  Feeding its noisy heading back
-        # into the attitude quaternion causes apparent motion/drift in the
-        # simulator, so keep the inertial estimate authoritative.
+        # Keep the inertial quaternion authoritative, but continuously publish
+        # a validated magnetic reference. Desktop clients use this finite
+        # heading to anchor inertial zero and then follow the smoother gyro.
         if not self.mag.available:
             return (pitch, roll, yaw, qw, qx, qy, qz)
         corrected_yaw = wrap_angle(yaw + self.mag_yaw_correction)
         self.last_mag_debug = self.mag.diagnostic(corrected_yaw)
         if self.last_mag_debug:
-            self.last_mag_debug["used"] = False
-            self.last_mag_debug["reject"] = "display-only"
+            heading_valid = self.last_mag_debug.get("heading") is not None
+            self.last_mag_debug["used"] = heading_valid
+            self.last_mag_debug["reject"] = (
+                "sync-reference" if heading_valid else "invalid-field"
+            )
             self.last_mag_debug["step"] = 0.0
         return (pitch, roll, yaw, qw, qx, qy, qz)
 
