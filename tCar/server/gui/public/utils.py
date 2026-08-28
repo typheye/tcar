@@ -104,35 +104,17 @@ def get_system_info():
         return "未知", "核心: 0%", "内存: 0%", "磁盘: 0%", "网络: 未连接", "0.0"
     
 def get_core_info():
-    """获取中枢信息（通过SSH连接到远程树莓派）"""
+    """获取中枢信息（通过 tCarCore RPC，不再依赖旧 TurboPi/SSH）。"""
     if get_core_status():
         try:
-            # SSH连接信息
-            ssh_prefix = f"ssh -o ConnectTimeout=1 -o BatchMode=yes pi@{get_core_host()}"
-            
-            def ssh_exec(cmd):
-                """执行SSH命令并返回结果"""
-                full_cmd = f'{ssh_prefix} "{cmd}"'
-                try:
-                    return subprocess.check_output(full_cmd, shell=True, stderr=subprocess.DEVNULL, timeout=2).decode("utf-8").strip()
-                except:
-                    return ""
-            
-            ip = ssh_exec("ip -4 addr show wlan0 2>/dev/null | grep -oP '(?<=inet\\s)\\d+(\\.\\d+){3}' || echo ''")
-
-            # 如果需要确保不为空
-            if len(ip) == 0 or not is_valid_ip(ip):
-                ip = "未知"
-            
-            # 温度
-            temp_output = ssh_exec("cat /sys/class/thermal/thermal_zone0/temp")
-            try:
-                temp = float(temp_output) / 1000 if temp_output else 0
-                temp_str = "%0.1f" % temp
-            except:
-                temp_str = "0.0"
-            
-            return ip, temp_str
+            from server.rpc.car_rpc import rpc_client
+            result = rpc_client.call("GetSystemInfo")
+            envelope = result.get("result") if result.get("success") else None
+            data = envelope[1] if isinstance(envelope, (list, tuple)) and len(envelope) >= 2 and envelope[0] else None
+            if not isinstance(data, dict): return "未知", "0.0"
+            ip = str(data.get("ip", "未知"))
+            if not is_valid_ip(ip): ip = get_core_host()
+            return ip, "%0.1f" % float(data.get("temperature_c", 0.0))
             
         except Exception as e:
             return "未知", "0.0"

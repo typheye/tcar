@@ -1,6 +1,5 @@
 # -*- coding:utf-8 -*-
 import time
-import os
 import cv2
 import numpy as np
 from PIL import Image
@@ -10,6 +9,7 @@ from server.gui.public.utils import press_key, wait_release, wait_press, get_cor
 from media.config import *
 from server.gui.public.camera_manager import Camera
 from server.rpc.core_host import get_core_host
+from server.rpc.car_rpc import rpc_client
 
 
 class PTZOpera:
@@ -50,18 +50,10 @@ class PTZOpera:
 
     def send_control_command(self, servo_id, active, direction=0):
         """发送连续控制命令"""
-        direction_str = str(direction)
-        active_str = "1" if active else "0"
-
-        cmd = f'''ssh pi@{get_core_host()} "sudo python3 /home/pi/TurboPi/HiwonderSDK/pyz_opera.py \
---servo {servo_id} \
---control \
---direction {direction_str} \
---speed 20"'''
-
         current_cmd = f"{servo_id}:{active}:{direction}"
         if self.control_states[servo_id]["last_cmd"] != current_cmd:
-            os.system(cmd)
+            speed = float(direction) * 0.55 if active else 0.0
+            rpc_client.call("SetServoVelocity", servo_id, speed)
             self.control_states[servo_id]["last_cmd"] = current_cmd
             self.control_states[servo_id]["active"] = active
             self.control_states[servo_id]["direction"] = direction
@@ -240,11 +232,7 @@ class PTZOpera:
     def show_main_ui(self):
         """显示云台控制界面"""
 
-        if get_core_status():
-            os.system(
-                f'ssh pi@{get_core_host()} "sudo python3 /home/pi/TurboPi/HiwonderSDK/servo_daemon.py" &'
-            )
-        else:
+        if not get_core_status():
             self.show_ui, self.show_ui_msg, self.show_ui_disable = (
                 1,
                 "中枢主机未连接",
@@ -287,9 +275,7 @@ class PTZOpera:
                     if wait_press(main_PIN):
                         wait_release(main_PIN)
                         if get_core_status():
-                            os.system(
-                                f'ssh pi@{get_core_host()} "sudo python3 /home/pi/TurboPi/HiwonderSDK/pyz_opera.py --reset"'
-                            )
+                            rpc_client.call("ResetPWMServo")
                             for servo_id in [1, 2]:
                                 self.control_states[servo_id]["active"] = False
                                 self.control_states[servo_id]["last_cmd"] = ""

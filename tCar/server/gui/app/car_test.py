@@ -2,6 +2,7 @@
 # 车体自检系统
 
 import time
+from server.rpc.car_rpc import rpc_client
 from server.rpc.core_host import get_core_host
 from server.gui.public.graphics import Graphics
 from server.gui.public.font_manager import fonts
@@ -62,10 +63,15 @@ class CarTest:
                                 True,
                             )
                             self.show_msg_screen(self.show_ui_msg, disable=self.show_ui_disable)
-                            os.system(
-                                f'ssh pi@{get_core_host()} "sudo python3 /home/pi/TurboPi/HiwonderSDK/hardware_test.py"'
+                            result = rpc_client.call("HardwareSelfTest")
+                            envelope = result.get("result") if result.get("success") else None
+                            passed = (isinstance(envelope, (list, tuple))
+                                      and len(envelope) >= 2 and envelope[0]
+                                      and isinstance(envelope[1], dict)
+                                      and envelope[1].get("ok"))
+                            self.show_ui, self.show_ui_msg, self.show_ui_disable = (
+                                1, "自检完成" if passed else "自检发现异常", False
                             )
-                            self.show_ui, self.show_ui_msg, self.show_ui_disable = 0, "", False
                         else:
                             self.show_ui, self.show_ui_msg, self.show_ui_disable = (
                                 1,

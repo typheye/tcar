@@ -6,7 +6,6 @@ import time
 import urllib.request
 import json
 from server.rpc.core_host import get_core_host
-import subprocess
 from server.rpc.car_rpc import rpc_client
 from server.gui.public.utils import *
 from media.config import *
@@ -118,10 +117,6 @@ class NetworkStatus:
 
     def _get_camera_status(self):
         if self.core_status:
-            if not self.have_funtion8:
-                if self.core_status:
-                    self.have_funtion8 = True
-                    rpc_client.load_function(8)
             result = rpc_client.heartbeat()
 
             try:
@@ -129,7 +124,7 @@ class NetworkStatus:
                 if result.get("success"):
                     # 检查返回数据格式
                     result_data = result.get("result")
-                    if result_data and isinstance(result_data, list):
+                    if result_data and isinstance(result_data, (list, tuple)):
                         # 第一个元素是True表示心跳正常
                         self.camera_status = bool(result_data[0])
                     else:
@@ -152,73 +147,13 @@ class NetworkStatus:
         # 检查主机在线状态
         if self.core_status:
             try:
-                # 使用subprocess执行ssh命令并获取输出
-                cmd = f'ssh -q -t pi@{get_core_host()} "sudo python3 /home/pi/TurboPi/Utils/battery.py"'
+                result = rpc_client.get_battery()
+                data = result.get("result") if result.get("success") else None
+                if isinstance(data, (list, tuple)) and len(data) >= 2 and data[0]:
+                    voltage = float(data[1]) / 1000.0
+                    battery = max(0.0, min(100.0, (voltage - 6.4) / 2.0 * 100.0))
+                    status = voltage > 5.0
 
-                # 执行命令并捕获输出
-                result = subprocess.run(
-                    cmd,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=2,  # 设置2秒超时
-                )
-
-                # 解析JSON输出
-                if result.returncode == 0 and result.stdout:
-                    # 获取第一行JSON数据
-                    info = result.stdout.strip()
-                    # 只取第一行，避免可能的额外输出
-                    lines = info.split("\n")
-                    for line in lines:
-                        if line.strip().startswith("{"):
-                            data = json.loads(line.strip())
-                            break
-                    else:
-                        # 如果没有找到JSON数据
-                        raise ValueError("未找到有效的JSON数据")
-
-                    # 新格式使用 "success" 字段
-                    if data.get("success", False):
-                        status = True
-                        voltage = data.get("voltage", -1)
-                        battery = data.get("battery", -1)
-
-                        # 可选：记录状态信息
-                        battery_status = data.get("status", "unknown")
-                        # 可以在这里添加状态处理逻辑
-                        # 例如：if battery_status == "critical": 发送警报
-                    else:
-                        # 测量失败，但有错误信息
-                        status = False
-                        voltage = -1
-                        battery = -1
-                        # 可以记录错误信息用于调试
-                        error_msg = data.get("error", "未知错误")
-                        # 可选：记录到日志
-                        # print(f"电池测量失败: {error_msg}", file=sys.stderr)
-                else:
-                    # 命令执行失败
-                    status = False
-                    voltage = -1
-                    battery = -1
-                    # 可以记录stderr输出用于调试
-                    if result.stderr:
-                        # print(f"SSH命令错误: {result.stderr}", file=sys.stderr)
-                        pass
-
-            except subprocess.TimeoutExpired:
-                # 超时
-                status = False
-                voltage = -1
-                battery = -1
-                # print("获取电池信息超时", file=sys.stderr)
-            except json.JSONDecodeError as e:
-                # JSON解析失败
-                status = False
-                voltage = -1
-                battery = -1
-                # print(f"JSON解析失败: {e}", file=sys.stderr)
             except Exception as e:
                 # 其他异常
                 status = False

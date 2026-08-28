@@ -27,6 +27,9 @@ class CarRPC:
             "GetRunningFunc": {"type": "positional", "params": []},
             "GetBatteryVoltage": {"type": "positional", "params": []},
             "GetSonarDistance": {"type": "positional", "params": []},
+            "GetSystemInfo": {"type": "positional", "params": []},
+            "HardwareSelfTest": {"type": "positional", "params": []},
+            "ResetPWMServo": {"type": "positional", "params": []},
             "GetSonarDistanceThreshold": {"type": "positional", "params": []},
             "SetSonarRGBStartSymphony": {"type": "positional", "params": []},
             "GetLABValue": {"type": "positional", "params": []},
@@ -40,6 +43,8 @@ class CarRPC:
             "ColorTrackingWheel": {"type": "positional", "params": ["state"]},
             "SaveLABValue": {"type": "positional", "params": ["color"]},
             "LoadFunc": {"type": "positional", "params": ["new_func"]},
+            "SetServoVelocity": {"type": "positional", "params": ["servo_id", "speed"]},
+            "GetPWMServoPosition": {"type": "positional", "params": ["servo_id"]},
             
             # 特殊字符串参数方法（参数必须是指定字符串）
             "UnloadBusServo": {"type": "positional", "params": ["args"], "fixed_value": "servoPowerDown"},
