@@ -97,7 +97,15 @@ class MPU6050:
     def _run(self):
         while self.running:
             started = time.monotonic()
-            ax, ay, az, gx, gy, gz = self.read_raw()
+            try:
+                ax, ay, az, gx, gy, gz = self.read_raw()
+            except (OSError, IOError, TimeoutError) as error:
+                # A transient I2C timeout must not kill the sensor thread or
+                # leave the whole UI with a permanently stale attitude.
+                self.log.warning("I2C read timeout; retaining last attitude: %s", error)
+                self.last_time = time.monotonic()
+                time.sleep(max(0.02, self.interval))
+                continue
             now = time.monotonic(); dt = min(0.05, max(0.001, now - (self.last_time or now))); self.last_time = now
             accel = (ax / 16384.0, ay / 16384.0, az / 16384.0)
             gyro = ((gx - self.gyro_offset[0]) / 16.4,

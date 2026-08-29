@@ -8,7 +8,7 @@
 sudo tee /etc/systemd/system/tcar-core.service >/dev/null <<'EOF'
 [Unit]
 Description=tCar Core Service
-After=network-online.target
+After=local-fs.target systemd-udev-settle.service network-online.target
 Wants=network-online.target
 
 [Service]
@@ -36,11 +36,15 @@ sudo systemctl enable tcar-core.service
 
 ## 切换到 tCar Core
 
-旧 TurboPi 服务只暂停和禁用，不删除，继续保留为回退版本。
+当前设备正式使用 tCar Core。旧 TurboPi 服务和设备端旧代码应移除，避免两个
+进程同时占用 GPIO/I2C/PWM。`hw_wifi.service` 等网络服务不属于车辆控制核心，
+不要停用。
 
 ```bash
-sudo systemctl disable --now turbopi.service
+sudo systemctl disable --now turbopi.service hw_find.service
 sudo systemctl enable --now tcar-core.service
+sudo rm -f /etc/systemd/system/turbopi.service
+sudo systemctl daemon-reload
 systemctl status tcar-core.service
 ```
 
@@ -62,4 +66,3 @@ journalctl -u tcar-core.service -n 200 --no-pager
 sudo systemctl disable --now tcar-core.service
 sudo systemctl enable --now turbopi.service
 ```
-
