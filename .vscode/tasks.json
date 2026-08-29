@@ -98,7 +98,7 @@
             "type": "shell",
             "icon": {
                 "id": "trash",
-                "tooltip": "删除树莓派 ~/TurboPi 目录"
+                "tooltip": "删除树莓派 ~/tCarCore 目录"
             },
             "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
             "args": [
