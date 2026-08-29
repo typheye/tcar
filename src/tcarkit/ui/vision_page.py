@@ -222,11 +222,15 @@ class VisionPage(QWidget):
         self.calibration_active = active
 
     def _update_battery(self, voltage, percent):
-        if not (math.isfinite(voltage) and math.isfinite(percent)):
+        if not math.isfinite(voltage):
             return
-        if not (0.0 <= percent <= 100.0 and 0.0 <= voltage <= 20.0):
+        if not (0.0 <= voltage <= 20.0):
             return
-        self.battery_samples.append((float(voltage), float(percent)))
+        # Keep Vision identical to zero2w's battery widget. The UDP percent
+        # field is treated as advisory because older Core builds reported
+        # stale or differently scaled values.
+        derived_percent = max(0.0, min(100.0, (float(voltage) - 6.4) / 2.0 * 100.0))
+        self.battery_samples.append((float(voltage), derived_percent))
 
     def _update_network_delay(self, delay_ms):
         if math.isfinite(delay_ms) and 0.0 <= delay_ms < 10000.0:
