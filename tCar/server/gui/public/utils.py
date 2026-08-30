@@ -195,35 +195,30 @@ def log(level, *info):
     s = symbols.get(level, " ")
     print("[%s] %s - %s" % (s, _time, ", ".join([str(x) for x in info])))
 
-def get_core_status(timeout=0.05):
-    """测试主机是否在线（防止卡死）"""
+_core_status_cache = {"value": False, "checked_at": 0.0}
+
+def get_core_status(timeout=0.5):
+    """稳定探测 tCarCore，避免 50ms ping 抖动造成 UI 反复离线。"""
+    now = time.monotonic()
+    if now - _core_status_cache["checked_at"] < 1.0:
+        return _core_status_cache["value"]
     try:
-        host = get_core_host(timeout=max(0.2, timeout))
+        host = get_core_host(timeout=max(0.5, timeout))
     except Exception:
+        _core_status_cache.update(value=False, checked_at=now)
         return False
-    
+
     try:
-        # Linux/Mac: -c 次数, -W 超时(秒)
-        cmd = ['ping', '-c', '1', '-W', str(timeout), host]
-            
-        # 使用subprocess.run，设置超时
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.DEVNULL,  # 丢弃输出
-            stderr=subprocess.DEVNULL,   # 丢弃错误
-            timeout=timeout + 1,         # 总超时时间
-            encoding='utf-8',
-            errors='ignore'
-        )
-            
-        # 返回码为0表示成功
-        return result.returncode == 0
-            
-    except subprocess.TimeoutExpired:
-        # 命令执行超时
-        return False
+        # API is the actual service used by the UI; TCP avoids ICMP
+        # scheduling/firewall false negatives and is bounded tightly.
+        with socket.create_connection((host, 8080), timeout=max(0.2, float(timeout))):
+            value = True
+    except OSError:
+        value = False
     except Exception:
-        return False
+        value = False
+    _core_status_cache.update(value=value, checked_at=now)
+    return value
     
 def is_valid_ip(ip_str, octet = False):
     """判断IP地址字符串是否合法"""
