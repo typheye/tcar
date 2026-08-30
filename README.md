@@ -1,6 +1,26 @@
-# Zero2W GUI 安装指南
+# Zero2W Car Device
 
-## 概述
+## 职责
+
+Zero2W 负责 Car Device 侧摄像头、状态转发和 GUI 辅助功能，不直接占用 4B 的运动控制硬件。
+
+## 目录索引
+
+| 路径 | 内容 |
+| --- | --- |
+| `Car/init.py` | 副机启动入口 |
+| `Car/server/` | HTTP、摄像头和中枢通信 |
+| `Car/gui/` | 设备界面与状态面板 |
+| `Car/toolbox/` | `tcar.service`、有线速度服务和 setup |
+| `docs/` | 安装、接口和排障文档 |
+
+## 安装
+
+```bash
+sudo sh /home/pi/tCar/toolbox/setup.sh
+```
+
+## 原有内容
 本指南将帮助您在 Raspberry Pi Zero 2 W 上安装并配置图形用户界面(GUI)应用，并将其设置为系统服务实现开机自启。
 
 ## 系统要求

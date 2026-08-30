@@ -1,0 +1,12 @@
+[Unit]
+Description=Set Ethernet Speed to 100M Full Duplex
+After=network.target
+Before=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ethtool -s eth0 speed 100 duplex full autoneg off
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
