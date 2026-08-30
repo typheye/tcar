@@ -40,7 +40,7 @@ def main():
     # is allowed to instantiate a second owner for the same physical device.
     buzzer = lifecycle.add("buzzer", Buzzer())
     rgb = lifecycle.add("board RGB", BoardRGB())
-    keys = lifecycle.add("board keys", BoardKeys())
+    keys = lifecycle.add("board keys", BoardKeys(buzzer))
     motors = lifecycle.add("motors", MotorController())
     servos = lifecycle.add("servos", ServoController())
     sonar = lifecycle.add("sonar", Sonar())

@@ -1,0 +1,6 @@
+# tCar WLAN profile used by tCar Core at startup.
+ssid: "Typheye Car 0000"
+password: "hitypheye"
+interface: "wlan0"
+router: "192.168.66.1"
+dhcp: true

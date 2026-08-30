@@ -1,0 +1,8 @@
+[Unit]
+Description=tCar WLAN helper
+After=wpa_supplicant.service
+[Service]
+ExecStart=/bin/sh /home/pi/tCarCore/toolbox/wlan-helper.sh
+Restart=always
+[Install]
+WantedBy=multi-user.target

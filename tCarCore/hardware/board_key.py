@@ -10,7 +10,8 @@ class BoardKeys:
     PINS = (13, 23)
     LONG_PRESS_SECONDS = 3.0
 
-    def __init__(self):
+    def __init__(self, buzzer=None):
+        self.buzzer = buzzer
         self.running = False
         self.thread = None
 
@@ -52,10 +53,13 @@ class BoardKeys:
                     fired[index] = False
             time.sleep(0.05)
 
-    @staticmethod
-    def _reset_wifi():
+    def _reset_wifi(self):
         """Reconfigure the native wpa_supplicant profile without old toolbox."""
         try:
+            # Audible acknowledgement makes a long press distinguishable from
+            # a missed button. The network restart itself remains synchronous.
+            if self.buzzer:
+                self.buzzer.pattern([(1, 0.12)])
             subprocess.run(
                 ["/sbin/wpa_cli", "-i", "wlan0", "reconfigure"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

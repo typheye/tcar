@@ -1,0 +1,9 @@
+[Unit]
+Description=Force Ethernet speed
+After=sys-subsystem-net-devices-eth0.device
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ethtool -s eth0 speed 100 duplex full autoneg off
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
