@@ -356,7 +356,9 @@ static void connect_profile(int i)
     strlcpy((char *)c.sta.ssid, prof[i].ssid, sizeof(c.sta.ssid));
     if (!prof[i].open)
         strlcpy((char *)c.sta.password, prof[i].pass, sizeof(c.sta.password));
-    c.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    /* Fast scan avoids long full-band retunes during reconnects. */
+    c.sta.scan_method = WIFI_FAST_SCAN;
+    c.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
     c.sta.threshold.authmode = WIFI_AUTH_OPEN;
     c.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     c.sta.failure_retry_cnt = 1;
@@ -487,6 +489,8 @@ static void init_wifi(void)
     ap.ap.authmode = WIFI_AUTH_WPA_WPA2_PSK;
     ap.ap.pmf_cfg.required = false;
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    /* Power-save wakeups can look like AP dropouts on a busy SoftAP. */
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap));
     ESP_ERROR_CHECK(esp_wifi_start());
     install_wifi_counters();
@@ -589,13 +593,21 @@ static esp_err_t test_handler(httpd_req_t *r)
 {
     wifi_sta_list_t l = {0};
     wifi_sta_mac_ip_list_t ips = {0};
+    esp_netif_pair_mac_ip_t pairs[AP_MAX_CONN] = {0};
     esp_wifi_ap_get_sta_list(&l);
     esp_wifi_ap_get_sta_list_with_ip(&l, &ips);
+    int pair_count = l.num > AP_MAX_CONN ? AP_MAX_CONN : l.num;
+    for (int i = 0; i < pair_count; i++)
+        memcpy(pairs[i].mac, l.sta[i].mac, 6);
+    if (pair_count > 0)
+        esp_netif_dhcps_get_clients_by_mac(apif, pair_count, pairs);
     char *j = calloc(1, 6144);
     if (!j)
         return httpd_resp_send_500(r);
     size_t o = 0;
     o += snprintf(j + o, 6144 - o, "{\"status\":%d,\"esptemp\":\"%.1f\",\"memory\":%d,\"ap\":{\"ssid\":\"%s\",\"ip\":\"%s\",\"clients\":%u},\"sta\":{\"connected\":%s,\"ssid\":\"%s\",\"ip\":\"" IPSTR "\",\"nat\":%s,\"profiles\":%d},\"devices\":[", all_special() ? 1 : 0, cpu_temp, mem_usage, AP_SSID, AP_IP, l.num, sta_connected ? "true" : "false", (active_prof >= 0 && prof[active_prof].valid) ? prof[active_prof].ssid : "", IP2STR(&sta_ip.ip), nat_enabled ? "true" : "false", prof_count);
+    if (o >= 6144)
+        o = 6143;
     bool first = true;
     for (size_t d = 0; d < sizeof(devs) / sizeof(devs[0]); d++)
     {
@@ -606,9 +618,20 @@ static esp_err_t test_handler(httpd_req_t *r)
             {
                 c = true;
                 ip = ip_for(&ips, l.sta[i].mac);
+                if (!ip || !ip->addr)
+                    for (int k = 0; k < pair_count; k++)
+                        if (memcmp(pairs[k].mac, l.sta[i].mac, 6) == 0 && pairs[k].ip.addr)
+                        {
+                            ip = &pairs[k].ip;
+                            break;
+                        }
                 break;
             }
-        o += snprintf(j + o, 6144 - o, "%s{\"name\":\"%s\",\"mac\":\"%s\",\"ip\":\"%s\",\"status\":%s}", first ? "" : ",", devs[d].en, devs[d].mac, ip ? ip4addr_ntoa((const ip4_addr_t *)ip) : "0.0.0.0", c ? "true" : "false");
+        const char *raw_ip = (ip && ip->addr) ? ip4addr_ntoa((const ip4_addr_t *)ip) : ((c && devs[d].fallback_ip) ? devs[d].fallback_ip : "0.0.0.0");
+        const char *ipstr = cache_ip(devs[d].mac, raw_ip);
+        o += snprintf(j + o, 6144 - o, "%s{\"name\":\"%s\",\"mac\":\"%s\",\"ip\":\"%s\",\"status\":%s}", first ? "" : ",", devs[d].en, devs[d].mac, ipstr, c ? "true" : "false");
+        if (o >= 6144)
+            o = 6143;
         first = false;
     }
     for (int i = 0; i < l.num; i++)
@@ -619,6 +642,8 @@ static esp_err_t test_handler(httpd_req_t *r)
         snprintf(m, sizeof(m), "%02X:%02X:%02X:%02X:%02X:%02X", l.sta[i].mac[0], l.sta[i].mac[1], l.sta[i].mac[2], l.sta[i].mac[3], l.sta[i].mac[4], l.sta[i].mac[5]);
         const esp_ip4_addr_t *ip = ip_for(&ips, l.sta[i].mac);
         o += snprintf(j + o, 6144 - o, "%s{\"name\":\"Other device\",\"mac\":\"%s\",\"ip\":\"%s\",\"status\":true}", first ? "" : ",", m, ip ? ip4addr_ntoa((const ip4_addr_t *)ip) : "0.0.0.0");
+        if (o >= 6144)
+            o = 6143;
         first = false;
     }
     snprintf(j + o, 6144 - o, "]}");
@@ -874,6 +899,11 @@ static void finish_scan_result(void)
                 if (dup)
                     continue;
                 o += snprintf(scan_json + o, sizeof(scan_json) - o, "%s{\"ssid\":\"%s\",\"rssi\":%d,\"auth\":\"%s\",\"open\":%s}", first ? "" : ",", (char *)rec[i].ssid, rec[i].rssi, auth_label(rec[i].authmode), rec[i].authmode == WIFI_AUTH_OPEN ? "true" : "false");
+                if (o >= sizeof(scan_json))
+                {
+                    o = sizeof(scan_json) - 1;
+                    break;
+                }
                 first = false;
             }
             snprintf(scan_json + o, sizeof(scan_json) - o, "],\"total\":%u}", total);
@@ -888,6 +918,15 @@ static esp_err_t api_scan(httpd_req_t *r)
     ESP_LOGI(TAG, "scan: request sta_connected=%d manual=%d running=%d ready=%d", sta_connected, sta_manual_disconnect, scan_running, scan_ready);
     httpd_resp_set_type(r, "application/json; charset=utf-8");
     httpd_resp_set_hdr(r, "Connection", "close");
+    /* A scan temporarily retunes the shared AP/STA radio.  Never start one
+       while clients are attached: it can disconnect the car and Core host. */
+    wifi_sta_list_t clients = {0};
+    esp_wifi_ap_get_sta_list(&clients);
+    if (clients.num > 0)
+    {
+        httpd_resp_sendstr(r, "{\"running\":false,\"networks\":[],\"error\":\"AP_CLIENTS_CONNECTED\"}");
+        return ESP_OK;
+    }
     if (sta_connected && !sta_manual_disconnect)
     {
         httpd_resp_sendstr(r, "{\"running\":false,\"networks\":[],\"error\":\"DISCONNECT_FIRST\"}");

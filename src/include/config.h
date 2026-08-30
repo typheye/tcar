@@ -6,7 +6,8 @@
 #define AP_CHANNEL 1
 #define AP_MAX_CONN 5
 #define WIFI_PROFILE_MAX 5
-#define WIFI_RETRY_LIMIT 2
+/* Keep the STA association alive across transient upstream/AP changes. */
+#define WIFI_RETRY_LIMIT 6
 #define DHCPS_OFFER_DNS 0x02
 #define LED_DUTY_MAX 8191
 
