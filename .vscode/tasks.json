@@ -98,7 +98,7 @@
             "type": "shell",
             "icon": {
                 "id": "trash",
-                "tooltip": "删除树莓派 ~/gui 目录"
+                "tooltip": "删除树莓派 ~/tCar 目录"
             },
             "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
             "args": [
