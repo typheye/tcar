@@ -52,7 +52,7 @@ class ControlService:
             if buttons.get("r2"):
                 self._translation_heading = None
                 self.operation_cancel.set()
-                self.motors.brake(); return
+                self.motors.brake(force=True); return
             if self.busy:
                 return
             select = buttons.get("select", False)

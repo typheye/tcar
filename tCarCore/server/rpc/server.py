@@ -26,6 +26,14 @@ class RPCServer:
         if method == "Heartbeat": return [True, (), "Heartbeat"]
         if method == "LoadFunc": return [True, (), "LoadFunc"]
         if method == "GetBatteryVoltage": return [True, self.telemetry.snapshot()["battery_voltage"] * 1000.0, "GetBatteryVoltage"]
+        if method == "GetBatteryStatus":
+            item = self.telemetry.snapshot()
+            return [True, {
+                "voltage": item["battery_voltage"],
+                "minimum_voltage": item["battery_min_voltage"],
+                "maximum_voltage": item["battery_max_voltage"],
+                "percent": item["battery_percent"],
+            }, "GetBatteryStatus"]
         if method == "GetSonarDistance": return [True, self.telemetry.snapshot()["distance_mm"], "GetSonarDistance"]
         if method == "SetPWMServo":
             duration, count, *values = params
@@ -47,7 +55,7 @@ class RPCServer:
             self.motors.authorize(); self.motors.set_all(commands)
             return [True, (), "SetBrushMotor"]
         if method == "EmergencyStop":
-            self.motors.brake(); return [True, (), "EmergencyStop"]
+            self.motors.brake(force=True); return [True, (), "EmergencyStop"]
         if method == "GetSystemInfo":
             return [True, self._system_info(), "GetSystemInfo"]
         if method == "HardwareSelfTest":
