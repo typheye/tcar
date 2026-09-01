@@ -3,6 +3,7 @@
 
 import threading
 import time
+import errno
 from contextlib import contextmanager
 
 try:
@@ -65,6 +66,16 @@ class I2CBusManager:
             self.open()
         return self._bus
 
+    def _recover_bus(self):
+        """Drop a poisoned SMBus descriptor so the next attempt reopens it."""
+        with self.lock:
+            bus, self._bus = self._bus, None
+            if bus is not None:
+                try:
+                    bus.close()
+                except (OSError, IOError):
+                    pass
+
     @contextmanager
     def transaction(self, allow_suspended=False):
         with self.lock:
@@ -74,7 +85,7 @@ class I2CBusManager:
                 )
             yield self._require_bus()
 
-    def retry(self, operation, attempts=2, delay=0.01,
+    def retry(self, operation, attempts=3, delay=0.02,
               allow_suspended=False):
         last_error = None
         for attempt in range(max(1, int(attempts))):
@@ -83,6 +94,10 @@ class I2CBusManager:
                     return operation(bus)
             except (OSError, IOError) as error:
                 last_error = error
+                if getattr(error, "errno", None) in (
+                    errno.ETIMEDOUT, errno.EREMOTEIO, errno.EIO,
+                ):
+                    self._recover_bus()
                 if attempt + 1 < attempts:
                     time.sleep(delay)
         raise last_error

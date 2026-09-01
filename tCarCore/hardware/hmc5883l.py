@@ -130,8 +130,12 @@ class HMC5883L:
         self.calibrated = True
         self.samples.clear()
         self.last_heading = None
-        self._save(turned)
+        self.pending_turn_degrees = turned
         return True
+
+    def commit_calibration(self):
+        """Persist only after the caller has validated a stable heading."""
+        self._save(getattr(self, "pending_turn_degrees", 0.0))
 
     def confirm_stable_heading(self, seconds=1.5, min_samples=20,
                                min_confidence=0.88):

@@ -5,6 +5,8 @@ import os
 import threading
 import time
 
+from server.core.logd_manager import get_logger
+
 try: import pygame
 except ImportError: pygame = None
 
@@ -19,6 +21,8 @@ class PSController:
         self.interval = 1.0 / poll_hz
         self.running = False; self.thread = None; self.joystick = None
         self.previous = None
+        self.log = get_logger("PSController")
+        self._last_callback_error = 0.0
 
     def start(self):
         if pygame is None: return
@@ -45,7 +49,14 @@ class PSController:
                          "buttons": {name: bool(self.joystick.get_button(i)) for i, name in enumerate(BUTTONS) if i < self.joystick.get_numbuttons()},
                          "hat": self.joystick.get_hat(0) if self.joystick.get_numhats() else (0, 0),
                          "timestamp": time.monotonic()}
-                self.callback(state)
-                self.previous = state
+                try:
+                    self.callback(state)
+                    self.previous = state
+                except Exception:
+                    # Hardware/I2C failures must not permanently kill input.
+                    now = time.monotonic()
+                    if now - self._last_callback_error >= 5.0:
+                        self.log.exception("controller callback failed; input loop retained")
+                        self._last_callback_error = now
             except pygame.error: self.joystick = None
             time.sleep(self.interval)

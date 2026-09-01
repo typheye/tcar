@@ -29,6 +29,8 @@ class MPU6050:
         self._still_roll = 0.0
         self.accel_zero_pitch = 0.0
         self.accel_zero_roll = 0.0
+        self._last_i2c_warning = 0.0
+        self._i2c_error_count = 0
 
     def start(self):
         self._initialize()
@@ -102,7 +104,15 @@ class MPU6050:
             except (OSError, IOError, TimeoutError) as error:
                 # A transient I2C timeout must not kill the sensor thread or
                 # leave the whole UI with a permanently stale attitude.
-                self.log.warning("I2C read timeout; retaining last attitude: %s", error)
+                self._i2c_error_count += 1
+                now = time.monotonic()
+                if now - self._last_i2c_warning >= 10.0:
+                    self.log.warning(
+                        "I2C read failure x%d; bus reopened, retaining last attitude: %s",
+                        self._i2c_error_count, error,
+                    )
+                    self._last_i2c_warning = now
+                    self._i2c_error_count = 0
                 self.last_time = time.monotonic()
                 time.sleep(max(0.02, self.interval))
                 continue

@@ -36,6 +36,10 @@ class ControlService:
             if self.busy:
                 return
             select = buttons.get("select", False)
+            if select and self._edge(previous_buttons, buttons, "y"):
+                muted = self.buzzer.toggle_mute()
+                self.log.info("buzzer %s", "muted" if muted else "unmuted")
+                return
             self._button_feedback(previous_buttons, buttons, select)
             hat = tuple(state.get("hat", (0, 0)))
             if hat != (0, 0) and self._last_hat == (0, 0):
@@ -47,6 +51,7 @@ class ControlService:
                 if self.desktop_toggle:
                     paused = self.desktop_toggle()
                     self.log.info("desktop routes %s", "paused" if paused else "active")
+                    self.buzzer.switch_feedback(paused)
                 return
             if not desktop_combo:
                 self._desktop_combo_active = False
@@ -106,6 +111,8 @@ class ControlService:
         # suppresses all normal key feedback while it is running.
         for name in ("y", "b", "a", "x", "l1", "r1", "select", "start", "l3", "r3", "mode"):
             if self._edge(previous, current, name):
+                if select and name in ("x", "y"):
+                    continue
                 duration = .05 if select and name in ("a", "b", "x", "start") else .012
                 self.buzzer.pattern([(1, duration)])
         # D-pad is a real button surface even when it is feedback-only.
@@ -123,8 +130,14 @@ class ControlService:
             try:
                 self.log.info("starting %s", name); function(); self.status = "complete"
                 self.log.info("completed %s", name)
+            except RuntimeError as error:
+                # Cancellation and failed calibration validation are expected
+                # operation results, not uncaught program faults.
+                self.status = "failed:" + str(error)
+                self.log.warning("%s failed: %s", name, error)
             except Exception as error:
-                self.status = "failed:" + str(error); self.log.exception("failed %s", name)
+                self.status = "failed:" + str(error)
+                self.log.exception("unexpected failure in %s", name)
             finally:
                 self.motors.brake(); self.busy = False; self.operation_cancel.clear()
         self.worker = threading.Thread(target=run, name=name.replace(" ", "-"), daemon=True); self.worker.start()
@@ -146,6 +159,13 @@ class ControlService:
         self.motors.authorize()
         self.motors.drive(0.0, 0.0, -0.30)
         succeeded = False
+        previous = (
+            list(self.magnetometer.offset),
+            list(self.magnetometer.scale),
+            self.magnetometer.field_radius,
+            self.magnetometer.calibrated,
+            self.magnetometer.last_heading,
+        )
         try:
             self.magnetometer.calibrate(
                 30.0,
@@ -157,9 +177,16 @@ class ControlService:
             heading = self.magnetometer.confirm_stable_heading()
             if heading is None:
                 raise RuntimeError("magnetometer heading validation failed")
+            self.magnetometer.commit_calibration()
             self.log.info("magnetometer heading ready %.1f deg", heading)
             succeeded = True
         finally:
+            if not succeeded:
+                (self.magnetometer.offset, self.magnetometer.scale,
+                 self.magnetometer.field_radius,
+                 self.magnetometer.calibrated,
+                 self.magnetometer.last_heading) = previous
+                self.magnetometer.samples.clear()
             self.motors.brake()
             self.sonar.set_suspended(False)
             self.sonar.reset_lights()
