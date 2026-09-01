@@ -17,6 +17,7 @@ from hardware.motor import MotorController
 from hardware.mpu6050 import MPU6050
 from hardware.ps_controller import PSController
 from hardware.hmc5883l import HMC5883L
+from hardware.fourInfrared import FourInfrared
 from hardware.servo import ServoController
 from hardware.sonar import Sonar
 from hardware.video_device import VideoDevice
@@ -44,6 +45,7 @@ def main():
     motors = lifecycle.add("motors", MotorController())
     servos = lifecycle.add("servos", ServoController())
     sonar = lifecycle.add("sonar", Sonar())
+    infrared = lifecycle.add("four infrared", FourInfrared())
     battery = lifecycle.add("battery", BatteryMonitor())
     mpu = lifecycle.add("MPU6050", MPU6050())
     magnetometer = lifecycle.add("HMC5883L", HMC5883L())
@@ -54,7 +56,7 @@ def main():
         ControlService(motors, servos, mpu, magnetometer, buzzer, sonar),
     )
     telemetry = lifecycle.add(
-        "telemetry", Telemetry(mpu, magnetometer, sonar, battery, servos)
+        "telemetry", Telemetry(mpu, magnetometer, sonar, battery, servos, infrared)
     )
     controller = lifecycle.add("PS controller", PSController(control.handle_input))
     lifecycle.add("internal RPC", RPCServer(telemetry, motors, servos, sonar))

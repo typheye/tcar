@@ -6,10 +6,12 @@ import time
 
 
 class Telemetry:
-    def __init__(self, mpu, magnetometer, sonar, battery, servo):
+    def __init__(self, mpu, magnetometer, sonar, battery, servo, infrared=None):
         self.mpu, self.magnetometer, self.sonar = mpu, magnetometer, sonar
         self.battery, self.servo = battery, servo
+        self.infrared = infrared
         self.lock = threading.RLock(); self.distance = 5000.0; self.mag_heading = None
+        self.infrared_mask = 0
         self.running = False; self.thread = None
     def start(self):
         self.running = True; self.thread = threading.Thread(target=self._run, name="telemetry", daemon=True); self.thread.start()
@@ -22,12 +24,14 @@ class Telemetry:
             except (OSError, RuntimeError): distance = 5000.0
             try: mag = self.magnetometer.heading()
             except (OSError, RuntimeError): mag = None
-            with self.lock: self.distance, self.mag_heading = distance, mag
+            try: infrared = self.infrared.read_mask() if self.infrared else 0
+            except (OSError, RuntimeError): infrared = self.infrared_mask
+            with self.lock: self.distance, self.mag_heading, self.infrared_mask = distance, mag, infrared
             time.sleep(0.05)
     def snapshot(self):
         attitude = self.mpu.snapshot()
-        with self.lock: distance, mag = self.distance, self.mag_heading
+        with self.lock: distance, mag, infrared = self.distance, self.mag_heading, self.infrared_mask
         return {**attitude, "mag_heading": mag, "distance_mm": distance,
                 "battery_voltage": self.battery.voltage, "battery_percent": self.battery.percent,
-                "camera_pan": self.servo.horizontal_angle(), "timestamp": time.time()}
-
+                "camera_pan": self.servo.horizontal_angle(),
+                "infrared_mask": infrared, "timestamp": time.time()}

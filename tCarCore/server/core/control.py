@@ -21,6 +21,7 @@ class ControlService:
         self._last_hat = (0, 0)
         self._right_servo_active = {1: False, 2: False}
         self._desktop_combo_active = False
+        self._translation_heading = None
 
     def start(self): self.motors.brake()
     def stop(self): self.motors.brake()
@@ -31,6 +32,7 @@ class ControlService:
             previous_buttons = self.last_buttons
             self.last_buttons = dict(buttons)
             if buttons.get("r2"):
+                self._translation_heading = None
                 self.operation_cancel.set()
                 self.motors.brake(); return
             if self.busy:
@@ -83,9 +85,11 @@ class ControlService:
 
             throttle = buttons.get("l2", False)
             if not throttle:
+                self._translation_heading = None
                 self.motors.brake(); return
             self.motors.authorize()
             if buttons.get("l1") != buttons.get("r1"):
+                self._translation_heading = None
                 direction = -1.0 if buttons.get("l1") else 1.0
                 self.motors.drive(0.0, 0.0, direction * 0.30); return
             x, y = axes[0], axes[1]
@@ -99,12 +103,18 @@ class ControlService:
                 x, y = float(hat_x), float(-hat_y)
             magnitude = min(1.0, math.hypot(x, y))
             if magnitude <= 0.06:
+                self._translation_heading = None
                 self.motors.brake()
             else:
                 self.motors.authorize()
                 speed = 26.0 + ((magnitude - 0.06) / 0.94) ** 1.5 * 34.0
                 direction = math.degrees(math.atan2(-y, x)) % 360.0
-                self.motors.drive(speed, direction)
+                heading = self.mpu.snapshot()["heading"]
+                if self._translation_heading is None:
+                    self._translation_heading = heading
+                error = (self._translation_heading - heading + 180.0) % 360.0 - 180.0
+                correction = max(-0.12, min(0.12, error * 0.012))
+                self.motors.drive(speed, direction, correction)
 
     def _button_feedback(self, previous, current, select):
         # L2/R2 intentionally have no sound. Calibration owns the buzzer and

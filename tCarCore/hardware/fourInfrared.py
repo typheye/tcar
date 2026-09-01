@@ -10,3 +10,5 @@ class FourInfrared:
         value = self.bus.read_byte_data(self.address, 0x01)
         return tuple(bool(value & mask) for mask in (1, 2, 4, 8))
 
+    def read_mask(self):
+        return self.bus.read_byte_data(self.address, 0x01) & 0x0F

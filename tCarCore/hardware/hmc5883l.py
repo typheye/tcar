@@ -23,7 +23,9 @@ class HMC5883L:
     # against vertical Z and therefore saw almost no coverage during a turn.
     AXIS_MAP = (0, 1, 2)
     AXIS_SIGN = (1.0, 1.0, -1.0)
-    HEADING_OFFSET_DEG = 90.0
+    # Installed board reports physical East as North before mounting
+    # compensation. Rotate once here; consumers must not remap it again.
+    HEADING_OFFSET_DEG = 180.0
 
     def __init__(self, bus=shared_i2c, calibration_path=None):
         self.bus = bus
