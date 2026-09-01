@@ -65,7 +65,11 @@ class ControlService:
             if select and self._edge(previous_buttons, buttons, "b"):
                 self._background("magnetometer calibration", self._calibrate_magnetic); return
             if self._edge(previous_buttons, buttons, "l3"):
-                self._background("heading reset", self._heading_reset); return
+                if self.mpu.snapshot().get("trajectory_enabled", False):
+                    self._background("return home", self._return_home)
+                else:
+                    self._background("heading reset", self._heading_reset)
+                return
 
             axes = tuple(state.get("axes", (0, 0, 0, 0))) + (0, 0, 0, 0)
             right_x, right_y = axes[2], axes[3]
@@ -206,7 +210,10 @@ class ControlService:
                 self.buzzer.pattern([(1, 1.0)])
 
     def _heading_reset(self):
-        deadline = time.monotonic() + 12.0
+        self._turn_to_heading(0.0, deadline=time.monotonic() + 12.0)
+
+    def _turn_to_heading(self, target_heading, deadline=None):
+        deadline = deadline or (time.monotonic() + 12.0)
         settled_since = None
         last_direction = None
         final_pulses = 0
@@ -215,7 +222,7 @@ class ControlService:
                 if self.operation_cancel.is_set():
                     raise RuntimeError("heading reset cancelled")
                 heading = self.mpu.snapshot()["heading"]
-                error = (0.0 - heading + 180.0) % 360.0 - 180.0
+                error = (target_heading - heading + 180.0) % 360.0 - 180.0
                 abs_error = abs(error)
 
                 if abs_error <= 2.0:
@@ -268,5 +275,89 @@ class ControlService:
                 else:
                     threading.Event().wait(0.04)
             raise RuntimeError("heading reset timed out")
+        finally:
+            self.motors.brake()
+
+    def _return_home(self):
+        """Bounded planar odometry navigation with front-sonar avoidance."""
+        navigation_deadline = time.monotonic() + 90.0
+        arrival_radius_mm = 110.0
+        obstacle_stop_mm = 320.0
+        clear_mm = 430.0
+        avoidance_sign = 1.0
+
+        try:
+            while time.monotonic() < navigation_deadline:
+                if self.operation_cancel.is_set():
+                    raise RuntimeError("return home cancelled")
+                state = self.mpu.snapshot()
+                if not state.get("trajectory_enabled", False):
+                    raise RuntimeError("trajectory disabled during return home")
+                x_mm, _y_mm, z_mm = state["position_mm"]
+                distance_home = math.hypot(x_mm, z_mm)
+                if distance_home <= arrival_radius_mm:
+                    self.motors.brake()
+                    self._turn_to_heading(
+                        0.0,
+                        deadline=min(navigation_deadline, time.monotonic() + 12.0),
+                    )
+                    self.log.info("return home complete %.0f mm", distance_home)
+                    return
+
+                # World forward at heading h is (sin(h), -cos(h)).
+                desired_heading = math.degrees(
+                    math.atan2(-x_mm, z_mm)
+                ) % 360.0
+                heading = state["heading"]
+                heading_error = (
+                    desired_heading - heading + 180.0
+                ) % 360.0 - 180.0
+
+                if abs(heading_error) > 8.0:
+                    self.motors.brake()
+                    self._turn_to_heading(
+                        desired_heading,
+                        deadline=min(navigation_deadline, time.monotonic() + 10.0),
+                    )
+                    continue
+
+                try:
+                    obstacle_mm = float(self.sonar.distance_mm())
+                except (OSError, RuntimeError, ValueError):
+                    obstacle_mm = 5000.0
+                if 30.0 <= obstacle_mm < obstacle_stop_mm:
+                    self.motors.brake()
+                    # Turn away in alternating directions until the fixed
+                    # forward sonar sees a clear route, then recalculate home.
+                    current = self.mpu.snapshot()["heading"]
+                    probe = (current + avoidance_sign * 65.0) % 360.0
+                    avoidance_sign *= -1.0
+                    self._turn_to_heading(
+                        probe,
+                        deadline=min(navigation_deadline, time.monotonic() + 8.0),
+                    )
+                    try:
+                        if float(self.sonar.distance_mm()) < clear_mm:
+                            continue
+                    except (OSError, RuntimeError, ValueError):
+                        pass
+                    # A short, confirmed detour creates clearance without
+                    # committing to a long blind segment.
+                    detour_end = min(navigation_deadline, time.monotonic() + 0.7)
+                    while time.monotonic() < detour_end:
+                        if self.operation_cancel.is_set():
+                            raise RuntimeError("return home cancelled")
+                        self.motors.authorize()
+                        self.motors.drive(30.0, 90.0, 0.0)
+                        threading.Event().wait(0.025)
+                    self.motors.brake()
+                    continue
+
+                speed = 30.0 if distance_home < 350.0 else 38.0
+                correction = max(-0.10, min(0.10, heading_error * 0.010))
+                self.motors.authorize()
+                self.motors.drive(speed, 90.0, correction)
+                threading.Event().wait(0.025)
+            raise RuntimeError("return home timed out")
         finally:
             self.motors.brake()
