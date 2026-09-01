@@ -16,6 +16,7 @@ class HomePage(QWidget):
         self.receiver.data_received.connect(self.update_data)
         self.receiver.calibration_status.connect(self._calibration_status)
         self._inertial_reset_active = False
+        self._trajectory_epoch = None
         self.receiver.start()
 
     def set_theme(self, dark):
@@ -46,6 +47,13 @@ class HomePage(QWidget):
         self.view.infrared_mask = int(round(data[17])) & 0x0F if len(data) >= 18 else 0
         if self.view.trajectory_enabled and len(data) >= 21:
             self.view.set_trajectory_position(data[18], 0.0, data[20])
+        if len(data) >= 22:
+            epoch = int(round(data[21]))
+            if self._trajectory_epoch is None:
+                self._trajectory_epoch = epoch
+            elif epoch != self._trajectory_epoch:
+                self._trajectory_epoch = epoch
+                self.view.reset_trajectory()
 
     def set_trajectory_enabled(self, enabled):
         # Reset locally first so no old trail survives the state transition;

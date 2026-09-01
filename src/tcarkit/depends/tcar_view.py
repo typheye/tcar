@@ -55,7 +55,14 @@ class UDPReceiver(QThread):
                     try:
                         data, addr = self.sock.recvfrom(1024)
                         self.network_delay.emit((time.monotonic() - request_started) * 1000.0)
-                        if len(data) == 84:
+                        if len(data) == 88:
+                            values = list(struct.unpack('!22f', data))
+                            self.data_received.emit(values)
+                            if not self.connected:
+                                self.connected = True
+                                self.connection_status.emit(True)
+                                print("Connected")
+                        elif len(data) == 84:
                             values = list(struct.unpack('!21f', data))
                             self.data_received.emit(values)
                             if not self.connected:
@@ -509,7 +516,7 @@ class ThirdPersonView(QGLWidget):
         glViewport(0, 0, w, h)
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
-        gluPerspective(45, w/h, 0.1, 100.0)
+        gluPerspective(45, w/h, 0.1, 1200.0)
         glMatrixMode(GL_MODELVIEW)
 
     def mousePressEvent(self, event):
@@ -534,7 +541,10 @@ class ThirdPersonView(QGLWidget):
             dy = event.y() - self.last_mouse_y
             self.cam_yaw += dx * 0.3
             self.cam_pitch += dy * 0.3
-            self.cam_pitch = max(5.0, min(85.0, self.cam_pitch))
+            # Near-horizontal views put the ground behind the camera and make
+            # half (or all) of Home look like an empty background. Keep a
+            # useful downward pitch while still allowing low inspection views.
+            self.cam_pitch = max(18.0, min(85.0, self.cam_pitch))
             self.last_mouse_x = event.x()
             self.last_mouse_y = event.y()
         elif self.is_panning:
@@ -558,11 +568,12 @@ class ThirdPersonView(QGLWidget):
     def set_camera_preset(self, preset):
         presets = {
             "reset": self.INITIAL_CAMERA,
-            "above": (0.0, 89.0, 10.0),
-            "front": (180.0, 8.0, 7.0),
-            "rear": (0.0, 8.0, 7.0),
-            "left": (-90.0, 8.0, 7.0),
-            "right": (90.0, 8.0, 7.0),
+            # 85 avoids the look-vector/up-vector degeneracy at exactly 90.
+            "above": (0.0, 85.0, 10.0),
+            "front": (180.0, 20.0, 7.0),
+            "rear": (0.0, 20.0, 7.0),
+            "left": (-90.0, 20.0, 7.0),
+            "right": (90.0, 20.0, 7.0),
             "isometric": (45.0, 35.0, 10.0),
         }
         if preset not in presets:
@@ -578,6 +589,9 @@ class ThirdPersonView(QGLWidget):
     def paintGL(self):
         # 婵犵數濮撮惀澶愬级鎼存挸浜炬俊銈勭劍閸欏繘鏌ｉ幋锝嗩棄缁炬儳顭烽弻锝呂熼懡銈冨仦闂佸搫顑呯粔褰掑蓟閿熺姴鐐婇柍杞扮悼閵忋倖鐓曢柕濠忓缁犵偤鏌＄仦璇插鐎殿噮鍣ｅ畷鍫曗€栭鑺ュ磳闁哄本绋戦埢搴ょ疀閺囩媭鍟嬮梻浣告惈閻ジ宕伴幘璺哄灊婵炲棙鍨跺畷澶愭煏婵炲灝鍔氶柟鐣屾暬濮?
         smooth = 0.25
+        # Enforce this every frame so presets and an old saved/interpolated
+        # angle cannot bypass the mouse-event clamp and expose the horizon.
+        self.cam_pitch = max(32.0, min(85.0, self.cam_pitch))
         self.cam_distance += (self.target_cam_distance - self.cam_distance) * 0.22
         self.view_x += (self.target_view_x - self.view_x) * 0.28
         self.view_y += (self.target_view_y - self.view_y) * 0.28
@@ -1025,7 +1039,10 @@ class ThirdPersonView(QGLWidget):
             # an unbounded plane without sending millions of GL vertices.
             center_x = self.cube_x + self.view_x
             center_z = self.cube_z + self.view_z
-            radius = max(18.0, min(96.0, self.cam_distance * 1.7))
+            # At long zoom the upper view ray meets the ground hundreds of GL
+            # units away. Extend the generated tile batch accordingly so the
+            # horizon never turns into an empty background.
+            radius = max(18.0, min(600.0, self.cam_distance * 6.5))
             start_x = math.floor((center_x - radius) / spacing)
             end_x = math.ceil((center_x + radius) / spacing)
             start_z = math.floor((center_z - radius) / spacing)

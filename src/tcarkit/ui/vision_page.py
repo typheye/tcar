@@ -54,6 +54,7 @@ class VisionPage(QWidget):
         self.debug_network_delay = False
         self.trajectory_enabled = False
         self.trajectory_position_mm = (0.0, 0.0, 0.0)
+        self.trajectory_epoch = None
 
         # Animate heading at display cadence while sensor targets and battery
         # values remain filtered independently.
@@ -148,6 +149,14 @@ class VisionPage(QWidget):
             position = (float(data[18]), 0.0, float(data[20]))
             if all(math.isfinite(value) for value in position):
                 self.trajectory_position_mm = position
+        if len(data) >= 22:
+            epoch = int(round(data[21]))
+            if self.trajectory_epoch is None:
+                self.trajectory_epoch = epoch
+            elif epoch != self.trajectory_epoch:
+                self.trajectory_epoch = epoch
+                self.trajectory_position_mm = (0.0, 0.0, 0.0)
+                self.update()
 
     def set_trajectory_enabled(self, enabled):
         self.trajectory_enabled = bool(enabled)
@@ -433,10 +442,13 @@ class VisionPage(QWidget):
         painter.setPen(QPen(QColor(255, 255, 255, 225), 2))
         painter.setBrush(QColor(205, 205, 205, 230))
         painter.drawEllipse(center, radius, radius)
-        if not self.gyro_ready:
-            self._draw_home_marker(painter, rect, center)
-            return
-        heading = self._camera_heading()
+        # The FOV cone is a permanent HUD element. Before the first valid
+        # inertial packet it uses the default/camera-pan heading, then hands
+        # over continuously without disappearing during calibration resets.
+        heading = (
+            self._camera_heading() if self.gyro_ready
+            else self.camera_pan_angle
+        )
         angle = math.radians(heading - 90.0)
         cone_length = size * 0.28
         half_fov = math.radians(24.0)
