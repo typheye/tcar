@@ -55,7 +55,14 @@ class UDPReceiver(QThread):
                     try:
                         data, addr = self.sock.recvfrom(1024)
                         self.network_delay.emit((time.monotonic() - request_started) * 1000.0)
-                        if len(data) == 68:
+                        if len(data) == 72:
+                            values = list(struct.unpack('!18f', data))
+                            self.data_received.emit(values)
+                            if not self.connected:
+                                self.connected = True
+                                self.connection_status.emit(True)
+                                print("Connected")
+                        elif len(data) == 68:
                             values = list(struct.unpack('!17f', data))
                             self.data_received.emit(values)
                             if not self.connected:
@@ -330,6 +337,7 @@ class ThirdPersonView(QGLWidget):
         self.obstacle_distance_mm = 5000.0
         self.obstacle_target_mm = 5000.0
         self.obstacle_visible = False
+        self.infrared_mask = 0
         self.distance_texture = None
         self.distance_texture_label = None
         self.pitch = 0.0
@@ -345,6 +353,8 @@ class ThirdPersonView(QGLWidget):
         self.last_mouse_x = 0
         self.last_mouse_y = 0
         self.is_dragging = False
+        self.is_panning = False
+        self.view_x = self.view_y = self.view_z = 0.0
         
         # 闂傚倸鍊搁崐鐑芥倿閿曞倹鍎戠憸鐗堝笒閺勩儵鏌涢弴銊ョ仩闁搞劌鍊块獮鏍庨鈧俊鑲┾偓鐟版啞缁诲啴濡甸崟顖氱妞ゆ牗顨呮禍楣冩煙?
         self.frame_count = 0
@@ -494,10 +504,16 @@ class ThirdPersonView(QGLWidget):
             self.is_dragging = True
             self.last_mouse_x = event.x()
             self.last_mouse_y = event.y()
+        elif event.button() == Qt.MiddleButton:
+            self.is_panning = True
+            self.last_mouse_x = event.x()
+            self.last_mouse_y = event.y()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.is_dragging = False
+        elif event.button() == Qt.MiddleButton:
+            self.is_panning = False
 
     def mouseMoveEvent(self, event):
         if self.is_dragging:
@@ -506,6 +522,16 @@ class ThirdPersonView(QGLWidget):
             self.cam_yaw += dx * 0.3
             self.cam_pitch += dy * 0.3
             self.cam_pitch = max(5.0, min(85.0, self.cam_pitch))
+            self.last_mouse_x = event.x()
+            self.last_mouse_y = event.y()
+        elif self.is_panning:
+            dx = event.x() - self.last_mouse_x
+            dy = event.y() - self.last_mouse_y
+            yaw = math.radians(self.cam_yaw)
+            scale = self.cam_distance * 0.0018
+            self.view_x -= math.cos(yaw) * dx * scale
+            self.view_z += math.sin(yaw) * dx * scale
+            self.view_y += dy * scale
             self.last_mouse_x = event.x()
             self.last_mouse_y = event.y()
 
@@ -531,12 +557,15 @@ class ThirdPersonView(QGLWidget):
         glLoadIdentity()
         
         # 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柣鎴ｅГ閸婂潡鏌ㄩ弴鐐测偓鍫曞焵椤掆偓閸熷磭绮诲☉妯锋婵☆垳鈷堝Σ顖涚節閻㈤潧浠﹂柛銊ㄦ硾椤繈濡歌娑撳秹鏌￠崒娑崇穿鐟滅増甯楅弲鏌ユ煕濞戝崬鏋︾痪顓涘亾濠碉紕鍋戦崐鎰板疾濠婂牊鍋傞柨鐔哄Т閽冪喓鎲搁幋鐘典笉婵炴垯鍨圭粻濠氭煛閸屾ê鍔氱憸鐗堝哺濮婄粯鎷呴搹鐟扮闂佸憡姊瑰ú鐔肩嵁閺嶎収鏁冮柕鍫濇矗缁楀鈹戦悙鍙夆枙濞存粍绻堥幃锟犲即閵忥紕鍘搁梺鎼炲劘閸庤鲸淇婇悡骞熺懓顭ㄩ崟顓犵厜闂佸搫鏈惄顖炵嵁濮椻偓閹瑩鎸婃径澶婂灊闂?
-        cam_x = self.cube_x + self.cam_distance * math.sin(math.radians(self.cam_yaw)) * math.cos(math.radians(self.cam_pitch))
-        cam_y = self.cube_y + self.cam_distance * math.sin(math.radians(self.cam_pitch))
-        cam_z = self.cube_z + self.cam_distance * math.cos(math.radians(self.cam_yaw)) * math.cos(math.radians(self.cam_pitch))
+        target_x = self.cube_x + self.view_x
+        target_y = self.cube_y + self.view_y
+        target_z = self.cube_z + self.view_z
+        cam_x = target_x + self.cam_distance * math.sin(math.radians(self.cam_yaw)) * math.cos(math.radians(self.cam_pitch))
+        cam_y = target_y + self.cam_distance * math.sin(math.radians(self.cam_pitch))
+        cam_z = target_z + self.cam_distance * math.cos(math.radians(self.cam_yaw)) * math.cos(math.radians(self.cam_pitch))
         
         gluLookAt(cam_x, cam_y, cam_z,
-                  self.cube_x, self.cube_y, self.cube_z,
+                  target_x, target_y, target_z,
                   0, 1, 0)
         
         # 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸绾惧綊鏌ｉ幋锝呅撻柛濠傛健閺屻劑寮撮悙娴嬪亾瑜版帒鐤炬い蹇撶墛閳锋帒霉閿濆牊顏犻柕鍡楋躬閺岋繝宕ㄩ鍓х厜闂侀潧妫楅崯鏉戠暦婵傜顫呴柍钘夋缂嶆姊绘担鍛婃儓闁哥噥鍋婇幃褔宕卞▎鎴滅瑝闂佹寧绻傞ˇ浼存偂閻斿吋鐓欓柟娈垮枛椤ｅ吋绻涢幊宄板娴?+ 闂傚倸鍊搁崐鎼佸磹閻戣姤鍤勯柛顐ｆ穿缂嶆牠鎮楅敐搴℃灈缂佲偓鐎ｎ偁浜滈柟鎵虫櫅閻掔儤绻涢崗鍏碱棃婵﹦绮幏鍛存惞閻熸壆顐奸梻浣虹帛椤ㄥ繘宕㈤幆褜鍤楀┑鐘叉搐缁犳氨鎲稿鍫熷€?(闂傚倸鍊搁崐鎼佸磹妞嬪海鐭嗗〒姘ｅ亾妤犵偛顦甸崹楣冨箛娴ｇ懓鍏婇梻渚€娼ц噹闁告洦鍓氶鍥ㄧ節瀵伴攱婢橀埀顒佹礋楠炲﹥鎯旈敐鍥紡?
@@ -745,6 +774,7 @@ class ThirdPersonView(QGLWidget):
             self._draw_vehicle_feature_edges()
 
         self._draw_obstacle_plane()
+        self._draw_infrared_sensors()
 
         arrow_base = self.vehicle_front_z - 0.16
         arrow_tip = arrow_base - 0.34
@@ -761,6 +791,22 @@ class ThirdPersonView(QGLWidget):
         glDisable(GL_LINE_SMOOTH)
         glEnable(GL_LIGHTING)
         glPopMatrix()
+
+    def _draw_infrared_sensors(self):
+        """Draw the four line sensors under the front edge of the vehicle."""
+        glDisable(GL_LIGHTING)
+        sensor_y = self.vehicle_obstacle_bounds[1] + 0.012
+        sensor_z = self.vehicle_front_z + 0.11
+        for index, x in enumerate((-0.30, -0.10, 0.10, 0.30)):
+            active = bool(self.infrared_mask & (1 << index))
+            glColor4f(0.15, 1.0, 0.35, 1.0) if active else glColor4f(0.18, 0.22, 0.24, 0.85)
+            glBegin(GL_QUADS)
+            glVertex3f(x - 0.065, sensor_y, sensor_z - 0.045)
+            glVertex3f(x + 0.065, sensor_y, sensor_z - 0.045)
+            glVertex3f(x + 0.065, sensor_y, sensor_z + 0.045)
+            glVertex3f(x - 0.065, sensor_y, sensor_z + 0.045)
+            glEnd()
+        glEnable(GL_LIGHTING)
 
     def _draw_obstacle_plane(self):
         if not self.obstacle_visible:

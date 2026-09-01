@@ -39,6 +39,7 @@ class HomePage(QWidget):
         self.view.set_sensor_data(
             pitch, roll, yaw, data[7], data[8], data[9], mag, distance_mm
         )
+        self.view.infrared_mask = int(round(data[17])) & 0x0F if len(data) >= 18 else 0
 
     def stop(self):
         self.view.timer.stop()
