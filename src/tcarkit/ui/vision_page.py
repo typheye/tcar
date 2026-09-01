@@ -41,7 +41,8 @@ class VisionPage(QWidget):
         self.calibration_active = False
         self.battery_voltage = 0.0
         self.battery_percent = 0.0
-        self.battery_samples = deque(maxlen=5)
+        self.battery_min_voltage = 6.4
+        self.battery_max_voltage = 8.4
         self.hud_ticks = 0
         self.camera_sequence = 0
         self.frame_times = deque(maxlen=45)
@@ -242,16 +243,20 @@ class VisionPage(QWidget):
             self.last_inertial_yaw = None
         self.calibration_active = active
 
-    def _update_battery(self, voltage, percent):
-        if not math.isfinite(voltage):
+    def _update_battery(self, voltage, minimum, maximum, percent):
+        if not all(math.isfinite(value) for value in (
+            voltage, minimum, maximum, percent
+        )):
             return
-        if not (0.0 <= voltage <= 20.0):
+        if not (0.0 <= voltage <= 20.0 and 0.0 <= percent <= 100.0):
             return
-        # Keep Vision identical to zero2w's battery widget. The UDP percent
-        # field is treated as advisory because older Core builds reported
-        # stale or differently scaled values.
-        derived_percent = max(0.0, min(100.0, (float(voltage) - 6.4) / 2.0 * 100.0))
-        self.battery_samples.append((float(voltage), derived_percent))
+        # 4B is the sole battery authority. Do not derive or smooth the
+        # percentage again on the desktop.
+        self.battery_voltage = float(voltage)
+        self.battery_min_voltage = float(minimum)
+        self.battery_max_voltage = float(maximum)
+        self.battery_percent = float(percent)
+        self.update()
 
     def _update_network_delay(self, delay_ms):
         if math.isfinite(delay_ms) and 0.0 <= delay_ms < 10000.0:
@@ -284,22 +289,6 @@ class VisionPage(QWidget):
             delta = self.camera_pan_target - self.camera_pan_angle
             if abs(delta) > 0.03:
                 self.camera_pan_angle += delta * 0.12
-                changed = True
-        self.hud_ticks += 1
-        if self.hud_ticks >= 60:
-            self.hud_ticks = 0
-            if self.battery_samples:
-                samples = sorted(self.battery_samples)
-                voltage = sorted(value[0] for value in samples)[len(samples) // 2]
-                percent = sorted(value[1] for value in samples)[len(samples) // 2]
-                if self.battery_percent == 0.0:
-                    self.battery_percent = percent
-                    self.battery_voltage = voltage
-                else:
-                    # Battery state changes slowly.  A gentle EMA removes ADC
-                    # noise without making a genuine discharge invisible.
-                    self.battery_percent += (percent - self.battery_percent) * 0.25
-                    self.battery_voltage += (voltage - self.battery_voltage) * 0.25
                 changed = True
         if changed:
             self.update()

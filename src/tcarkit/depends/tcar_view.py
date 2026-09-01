@@ -25,7 +25,7 @@ class UDPReceiver(QThread):
     data_received = pyqtSignal(list)
     connection_status = pyqtSignal(bool)
     calibration_status = pyqtSignal(str)
-    battery_status = pyqtSignal(float, float)
+    battery_status = pyqtSignal(float, float, float, float)
     network_delay = pyqtSignal(float)
     
     def __init__(self, ip='192.168.66.3', port=8888):
@@ -126,8 +126,19 @@ class UDPReceiver(QThread):
                             self.sock.sendto(b'battery_status', (self.ip, self.port))
                             try:
                                 battery_data, _ = self.sock.recvfrom(256)
-                                voltage_text, percent_text = battery_data.decode().split(',', 1)
-                                self.battery_status.emit(float(voltage_text), float(percent_text))
+                                fields = battery_data.decode().split(',')
+                                if len(fields) == 4:
+                                    voltage, minimum, maximum, percent = map(float, fields)
+                                elif len(fields) == 2:
+                                    # Transitional compatibility while the 4B
+                                    # service restarts during development.
+                                    voltage, percent = map(float, fields)
+                                    minimum, maximum = 6.4, 8.4
+                                else:
+                                    raise ValueError("invalid battery status")
+                                self.battery_status.emit(
+                                    voltage, minimum, maximum, percent
+                                )
                             except (socket.timeout, UnicodeDecodeError, ValueError):
                                 pass
                         self.msleep(20)
