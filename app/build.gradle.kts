@@ -1,3 +1,4 @@
+import java.io.FileInputStream
 import java.util.Properties
 
 plugins {
@@ -6,16 +7,36 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val signing = Properties().also { file("../keystore.properties").takeIf { it.exists() }?.inputStream()?.use(it::load) }
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    load(FileInputStream(keystorePropertiesFile))
+}
 
 android { namespace = "com.typheye.tcarkit"; compileSdk = 35
     defaultConfig { applicationId = "com.typheye.tcarkit"; minSdk = 26; targetSdk = 35; versionCode = 1; versionName = "0.1.0" }
     signingConfigs {
+        getByName("debug") {
+            storeFile = file(keystoreProperties["release.store.file"] as String)
+            storePassword = keystoreProperties["release.store.password"] as String
+            keyAlias = keystoreProperties["release.key.alias"] as String
+            keyPassword = keystoreProperties["release.key.password"] as String
+
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
+        }
+
         create("release") {
-            storeFile = file(signing.getProperty("release.store.file", "../keystore/keystore.jks"))
-            storePassword = signing.getProperty("release.store.password")
-            keyAlias = signing.getProperty("release.key.alias", "root")
-            keyPassword = signing.getProperty("release.key.password")
+            storeFile = file(keystoreProperties["release.store.file"] as String)
+            storePassword = keystoreProperties["release.store.password"] as String
+            keyAlias = keystoreProperties["release.key.alias"] as String
+            keyPassword = keystoreProperties["release.key.password"] as String
+
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
         }
     }
     buildTypes { release { isMinifyEnabled = false; signingConfig = signingConfigs.getByName("release") } }
