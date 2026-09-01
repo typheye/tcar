@@ -100,7 +100,14 @@ class APIServer:
                     sock.sendto(self.control.status.encode(), address); continue
                 if data == b"battery_status":
                     item = self.telemetry.snapshot()
-                    sock.sendto(f"{item['battery_voltage']:.2f},{item['battery_percent']:.1f}".encode(), address); continue
+                    sock.sendto(
+                        (
+                            f"{item['battery_voltage']:.3f},"
+                            f"{item['battery_min_voltage']:.2f},"
+                            f"{item['battery_max_voltage']:.2f},"
+                            f"{item['battery_percent']:.1f}"
+                        ).encode(), address,
+                    ); continue
                 if data == b"performance_status":
                     sock.sendto(json.dumps(self._performance(), separators=(",", ":")).encode(), address); continue
                 if data == b"calibrate_inertial":

@@ -26,6 +26,24 @@ class ControlService:
     def start(self): self.motors.brake()
     def stop(self): self.motors.brake()
 
+    def begin_exclusive_operation(self, name):
+        with self.lock:
+            if self.busy:
+                return False
+            self.busy = True
+            self.status = "starting:" + str(name).replace(" ", "_")
+            self.operation_cancel.clear()
+            self.motors.brake()
+            self.log.info("starting %s", name)
+            return True
+
+    def end_exclusive_operation(self):
+        with self.lock:
+            self.motors.brake()
+            self.busy = False
+            self.status = "complete"
+            self.operation_cancel.clear()
+
     def handle_input(self, state):
         buttons = state.get("buttons", {})
         with self.lock:

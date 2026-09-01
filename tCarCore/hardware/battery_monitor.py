@@ -11,12 +11,18 @@ from hardware.i2c_bus import shared_i2c
 
 class BatteryMonitor:
     ADDRESS = 0x7A
+    MINIMUM_VOLTAGE = 6.4
+    MAXIMUM_VOLTAGE = 8.4
+    RAW_MINIMUM_VOLTAGE = 5.8
+    RAW_MAXIMUM_VOLTAGE = 8.8
 
-    def __init__(self, bus=shared_i2c, interval=1.0):
+    def __init__(self, bus=shared_i2c, interval=0.5):
         self.bus = bus
         self.interval = interval
-        self.samples = deque(maxlen=5)
+        self.samples = deque(maxlen=15)
         self.voltage = 0.0
+        self._percent = 0.0
+        self.valid_samples = 0
         self.running = False
         self.thread = None
 
@@ -36,16 +42,46 @@ class BatteryMonitor:
 
     @property
     def percent(self):
-        return max(0.0, min(100.0, (self.voltage - 6.4) / 2.0 * 100.0)) if self.voltage > 6.0 else 0.0
+        return self._percent
+
+    @property
+    def minimum_voltage(self):
+        return self.MINIMUM_VOLTAGE
+
+    @property
+    def maximum_voltage(self):
+        return self.MAXIMUM_VOLTAGE
+
+    def _accept(self, value):
+        if not self.RAW_MINIMUM_VOLTAGE <= value <= self.RAW_MAXIMUM_VOLTAGE:
+            return
+        self.samples.append(value)
+        self.valid_samples += 1
+        median = statistics.median(self.samples)
+        if self.voltage <= 0.0:
+            self.voltage = median
+        else:
+            # Suppress load spikes and ADC jitter. The slew limit also makes
+            # one changing edge unable to move the public value abruptly.
+            target = self.voltage + (median - self.voltage) * 0.12
+            change = max(-0.015, min(0.015, target - self.voltage))
+            self.voltage += change
+        target_percent = max(0.0, min(
+            100.0,
+            (self.voltage - self.MINIMUM_VOLTAGE)
+            / (self.MAXIMUM_VOLTAGE - self.MINIMUM_VOLTAGE) * 100.0,
+        ))
+        if self.valid_samples == 1:
+            self._percent = target_percent
+        else:
+            change = max(-0.25, min(0.25, target_percent - self._percent))
+            self._percent += change
 
     def _run(self):
         while self.running:
             try:
                 value = self.read_voltage()
-                if 5.0 < value < 9.0:
-                    self.samples.append(value)
-                    self.voltage = statistics.median(self.samples)
+                self._accept(value)
             except (OSError, RuntimeError):
                 pass
             time.sleep(self.interval)
-

@@ -60,7 +60,7 @@ def main():
         "telemetry", Telemetry(mpu, magnetometer, sonar, battery, servos, infrared)
     )
     controller = lifecycle.add("PS controller", PSController(control.handle_input))
-    lifecycle.add("internal RPC", RPCServer(telemetry, motors, servos, sonar))
+    lifecycle.add("internal RPC", RPCServer(telemetry, motors, servos, sonar, control))
     api = lifecycle.add("external API", APIServer(telemetry, video, control))
     control.desktop_toggle = api.toggle_paused
     try:

@@ -12,8 +12,9 @@ from server.core.logd_manager import get_logger
 
 
 class RPCServer:
-    def __init__(self, telemetry, motors, servos, sonar):
+    def __init__(self, telemetry, motors, servos, sonar, control=None):
         self.telemetry, self.motors, self.servos, self.sonar = telemetry, motors, servos, sonar
+        self.control = control
         self.log = get_logger("RPC"); self.http = None; self.thread = None
     def start(self):
         self.http = ThreadingHTTPServer(("0.0.0.0", 9030), self._handler())
@@ -78,6 +79,10 @@ class RPCServer:
                 "hostname": socket.gethostname()}
 
     def _hardware_self_test(self):
+        if self.control is None:
+            raise RuntimeError("control service unavailable")
+        if not self.control.begin_exclusive_operation("hardware self-test"):
+            raise RuntimeError("vehicle is busy")
         report = {"battery": False, "sonar": False, "servos": False,
                   "motors": False, "timestamp": time.time()}
         item = self.telemetry.snapshot()
@@ -85,22 +90,61 @@ class RPCServer:
         report["sonar"] = 30.0 <= item["distance_mm"] <= 5000.0
         centers = {servo_id: self.servos.factory[servo_id] for servo_id in (1, 2)}
         try:
-            # Match the original self-test, but keep the movements smaller and
-            # serialize them through tCarCore's sole servo owner.
+            # Test the complete configured travel of each axis, one axis at a
+            # time. Slow moves make the mechanism observable and prevent the
+            # expansion board from dropping overlapping two-axis commands.
             for servo_id in (1, 2):
-                self.servos.set_pulse(servo_id, centers[servo_id] + 180, 250); time.sleep(.28)
-                self.servos.set_pulse(servo_id, centers[servo_id] - 180, 250); time.sleep(.28)
-                self.servos.set_pulse(servo_id, centers[servo_id], 250); time.sleep(.30)
+                low, high = self.servos.limits[servo_id]
+                self._check_self_test_cancelled()
+                self.log.info("self-test servo %d moving to low limit %d", servo_id, low)
+                self.servos.set_pulse(servo_id, low, 1200)
+                self._wait_self_test(1.35)
+                self._check_self_test_cancelled()
+                self.log.info("self-test servo %d sweeping to high limit %d", servo_id, high)
+                self.servos.set_pulse(servo_id, high, 1800)
+                self._wait_self_test(1.95)
+                self._check_self_test_cancelled()
+                self.log.info("self-test servo %d returning to center %d", servo_id, centers[servo_id])
+                self.servos.set_pulse(servo_id, centers[servo_id], 1200)
+                self._wait_self_test(1.35)
+                self.log.info("self-test servo %d completed", servo_id)
             report["servos"] = True
             for motor_id in range(4):
-                speeds = [0, 0, 0, 0]; speeds[motor_id] = 30
-                self.motors.authorize(); self.motors.set_all(speeds); time.sleep(.25)
-                self.motors.brake(); time.sleep(.12)
+                # Low PWM is only marginally above the anti-whine floor and
+                # cannot overcome loaded wheel stiction reliably. Use a clear
+                # observation speed while energizing only the selected wheel.
+                self.motors.brake(); time.sleep(.15)
+                speeds = [0, 0, 0, 0]; speeds[motor_id] = 50
+                # Keep each wheel energized long enough for its mechanical
+                # response to be observed reliably during a physical test.
+                self.motors.authorize(); self.motors.set_all(speeds)
+                wheel_started = time.monotonic()
+                self.log.info("self-test wheel %d started PWM 50", motor_id + 1)
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    self._check_self_test_cancelled()
+                    time.sleep(.025)
+                self.motors.brake(); time.sleep(.20)
+                self.log.info(
+                    "self-test wheel %d completed %.2f s",
+                    motor_id + 1, time.monotonic() - wheel_started,
+                )
             report["motors"] = True
         finally:
             self.motors.brake(); self.servos.reset()
+            self.control.end_exclusive_operation()
         report["ok"] = all(report[key] for key in ("battery", "sonar", "servos", "motors"))
         return report
+
+    def _check_self_test_cancelled(self):
+        if self.control.operation_cancel.is_set():
+            raise RuntimeError("hardware self-test cancelled")
+
+    def _wait_self_test(self, duration):
+        deadline = time.monotonic() + float(duration)
+        while time.monotonic() < deadline:
+            self._check_self_test_cancelled()
+            time.sleep(min(.025, max(0.0, deadline - time.monotonic())))
     def _handler(self):
         owner = self
         class Handler(BaseHTTPRequestHandler):

@@ -33,5 +33,7 @@ class Telemetry:
         with self.lock: distance, mag, infrared = self.distance, self.mag_heading, self.infrared_mask
         return {**attitude, "mag_heading": mag, "distance_mm": distance,
                 "battery_voltage": self.battery.voltage, "battery_percent": self.battery.percent,
+                "battery_min_voltage": self.battery.minimum_voltage,
+                "battery_max_voltage": self.battery.maximum_voltage,
                 "camera_pan": self.servo.horizontal_angle(),
                 "infrared_mask": infrared, "timestamp": time.time()}
