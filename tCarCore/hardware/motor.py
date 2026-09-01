@@ -3,6 +3,7 @@
 
 import math
 import threading
+import time
 
 from hardware.i2c_bus import shared_i2c
 
@@ -17,6 +18,11 @@ class MotorController:
         self.lock = threading.RLock()
         self.commands = (0, 0, 0, 0)
         self.braked = True
+        # Last accepted chassis translation.  Consumers such as trajectory
+        # odometry read this instead of trying to reverse the four PWM values.
+        self.motion_velocity = 0.0
+        self.motion_direction = 0.0
+        self.motion_updated_at = 0.0
 
     def start(self): self.brake()
     def stop(self): self.brake()
@@ -40,6 +46,11 @@ class MotorController:
                                         physical & 0xFF)
             self.bus.retry(operation)
             self.commands = values
+            # A raw per-wheel command has no unambiguous chassis vector.
+            # Invalidate a previous drive() vector so it cannot leak into
+            # trajectory integration through RPC or self-test operations.
+            self.motion_velocity = 0.0
+            self.motion_updated_at = time.monotonic()
             return True
 
     def authorize(self):
@@ -54,8 +65,22 @@ class MotorController:
         radians = math.radians(direction)
         vx, vy = velocity * math.cos(radians), velocity * math.sin(radians)
         vp = -angular_rate * 126.0
-        return self.set_all(self._normalize((vy + vx - vp, vy - vx + vp,
-                                             vy - vx - vp, vy + vx + vp)))
+        accepted = self.set_all(self._normalize((vy + vx - vp, vy - vx + vp,
+                                                 vy - vx - vp, vy + vx + vp)))
+        if accepted:
+            with self.lock:
+                self.motion_velocity = max(0.0, float(velocity))
+                self.motion_direction = float(direction) % 360.0
+                self.motion_updated_at = time.monotonic()
+        return accepted
+
+    def motion_snapshot(self, max_age=0.15):
+        """Return fresh chassis translation in mm/s and vehicle degrees."""
+        with self.lock:
+            age = time.monotonic() - self.motion_updated_at
+            if self.braked or age > max_age:
+                return 0.0, self.motion_direction
+            return self.motion_velocity, self.motion_direction
 
     def _normalize(self, values):
         peak = max(abs(v) for v in values)
@@ -71,4 +96,3 @@ class MotorController:
             command = int(round(value * gain))
             result.append(0 if command and abs(command) < self.minimum_speed else command)
         return tuple(result)
-

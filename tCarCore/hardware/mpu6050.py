@@ -31,6 +31,20 @@ class MPU6050:
         self.accel_zero_roll = 0.0
         self._last_i2c_warning = 0.0
         self._i2c_error_count = 0
+        self.position = [0.0, 0.0, 0.0]
+        self.velocity = [0.0, 0.0, 0.0]
+        self.trajectory_enabled = False
+        self._accel_reference = [0.0, 0.0, -1.0]
+        self._motion_provider = None
+        self._planar_accel_lp = [0.0, 0.0]
+        self._motion_commanded = False
+        self._motion_confirmed = False
+        self._motion_started_at = 0.0
+
+    def set_motion_provider(self, provider):
+        """Attach the single motor owner's fresh chassis-motion snapshot."""
+        with self.lock:
+            self._motion_provider = provider
 
     def start(self):
         self._initialize()
@@ -70,11 +84,12 @@ class MPU6050:
         self.log.info("gyro offset %.2f %.2f %.2f", *self.gyro_offset)
 
     def zero_attitude(self):
-        pitch_samples, roll_samples = [], []
+        pitch_samples, roll_samples, accel_samples = [], [], []
         for _ in range(100):
             ax, ay, az = self.read_raw()[:3]
             pitch_samples.append(math.degrees(math.atan2(-ax, -az)))
             roll_samples.append(math.degrees(math.atan2(-ay, -az)))
+            accel_samples.append((ax / 16384.0, ay / 16384.0, az / 16384.0))
             time.sleep(0.005)
         with self.lock:
             self.accel_zero_pitch = sum(pitch_samples) / len(pitch_samples)
@@ -82,6 +97,25 @@ class MPU6050:
             self.pitch = self.roll = self.yaw = 0.0
             self._still_pitch = self._still_roll = 0.0
             self.last_time = time.monotonic()
+            self._accel_reference = [sum(row[i] for row in accel_samples) / len(accel_samples) for i in range(3)]
+            self.reset_trajectory()
+
+    def set_trajectory_enabled(self, enabled):
+        with self.lock:
+            self.trajectory_enabled = bool(enabled)
+            # Every state transition establishes a new trajectory origin.
+            # This also prevents a stale position packet from reappearing when
+            # the desktop enables the feature again.
+            self.reset_trajectory()
+
+    def reset_trajectory(self):
+        with self.lock:
+            self.position = [0.0, 0.0, 0.0]
+            self.velocity = [0.0, 0.0, 0.0]
+            self._planar_accel_lp = [0.0, 0.0]
+            self._motion_commanded = False
+            self._motion_confirmed = False
+            self._motion_started_at = 0.0
 
     def recalibrate(self):
         was_running = self.running
@@ -157,6 +191,57 @@ class MPU6050:
                 # remapping sensor axes into the tCar vehicle frame.
                 q = self._quaternion(-self.pitch, self.roll, -self.yaw)
                 self.quaternion = (q[0], -q[2], -q[3], q[1])
+                if self.trajectory_enabled:
+                    # An MPU alone cannot recover distance during constant
+                    # speed: acceleration becomes zero, and double integration
+                    # is dominated by bias.  Use commanded mecanum velocity for
+                    # the drivable X/Z plane, rotated into the world by yaw.
+                    velocity_mm_s, direction_deg = (0.0, 0.0)
+                    if self._motion_provider is not None:
+                        velocity_mm_s, direction_deg = self._motion_provider()
+                    linear = [accel[i] - self._accel_reference[i] for i in range(3)]
+                    for axis in range(2):
+                        self._planar_accel_lp[axis] += (
+                            linear[axis] - self._planar_accel_lp[axis]
+                        ) * 0.16
+                    planar_response = math.hypot(*self._planar_accel_lp)
+                    commanded = velocity_mm_s > 0.5
+                    if commanded and not self._motion_commanded:
+                        self._motion_started_at = now
+                        self._motion_confirmed = planar_response >= 0.018
+                    elif commanded and not self._motion_confirmed:
+                        # A real chassis translation produces a low-frequency
+                        # inertial onset. Do not turn wheel PWM directly into
+                        # distance until that onset is observed.
+                        if planar_response >= 0.018:
+                            self._motion_confirmed = True
+                        elif now - self._motion_started_at > 0.45:
+                            velocity_mm_s = 0.0
+                    elif not commanded:
+                        self._motion_confirmed = False
+                    self._motion_commanded = commanded
+                    if commanded and not self._motion_confirmed:
+                        velocity_mm_s = 0.0
+                    direction = math.radians(direction_deg)
+                    local_right = velocity_mm_s * math.cos(direction)
+                    local_forward = velocity_mm_s * math.sin(direction)
+                    heading = math.radians((-self.yaw) % 360.0)
+                    world_right = (
+                        local_right * math.cos(heading)
+                        + local_forward * math.sin(heading)
+                    )
+                    world_back = (
+                        local_right * math.sin(heading)
+                        - local_forward * math.cos(heading)
+                    )
+                    self.position[0] += world_right * dt
+                    self.position[2] += world_back * dt
+
+                    # Trajectory Space is deliberately planar. Without an
+                    # independent altitude sensor, vertical double integration
+                    # cannot remain bounded, so never publish a fictitious Y.
+                    self.velocity[1] = 0.0
+                    self.position[1] = 0.0
             time.sleep(max(0.0, self.interval - (time.monotonic() - started)))
 
     @staticmethod
@@ -174,4 +259,6 @@ class MPU6050:
         with self.lock:
             return {"pitch": self.pitch, "roll": self.roll, "yaw": self.yaw,
                     "heading": (-self.yaw) % 360.0, "quaternion": self.quaternion,
-                    "accel": self.accel, "gyro": self.gyro}
+                    "accel": self.accel, "gyro": self.gyro,
+                    "position_mm": tuple(self.position),
+                    "trajectory_enabled": self.trajectory_enabled}

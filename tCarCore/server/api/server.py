@@ -109,12 +109,17 @@ class APIServer:
                 if data == b"calibrate_magnetometer":
                     self.control._background("magnetometer calibration", self.control._calibrate_magnetic)
                     sock.sendto(f"started:{self.control.status}".encode(), address); continue
+                if data.startswith(b"trajectory_enable:"):
+                    self.control.mpu.set_trajectory_enabled(data.endswith(b"1"))
+                    sock.sendto(b"ok", address); continue
+                if data == b"trajectory_reset":
+                    self.control.mpu.reset_trajectory(); sock.sendto(b"ok", address); continue
                 if data != b"get_data": continue
                 item = self.telemetry.snapshot(); q = item["quaternion"]; a = item["accel"]; g = item["gyro"]
                 mag = item["mag_heading"] if item["mag_heading"] is not None else float("nan")
-                packet = struct.pack("!18f", item["pitch"], item["roll"], item["yaw"], *q, *a, *g,
+                packet = struct.pack("!21f", item["pitch"], item["roll"], item["yaw"], *q, *a, *g,
                                      item["distance_mm"], mag, item["heading"], item["camera_pan"],
-                                     float(item["infrared_mask"]))
+                                     float(item["infrared_mask"]), *item["position_mm"])
                 sock.sendto(packet, address)
         finally: sock.close()
 

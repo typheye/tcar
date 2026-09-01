@@ -48,6 +48,7 @@ def main():
     infrared = lifecycle.add("four infrared", FourInfrared())
     battery = lifecycle.add("battery", BatteryMonitor())
     mpu = lifecycle.add("MPU6050", MPU6050())
+    mpu.set_motion_provider(motors.motion_snapshot)
     magnetometer = lifecycle.add("HMC5883L", HMC5883L())
     video = lifecycle.add("video", VideoDevice())
 
