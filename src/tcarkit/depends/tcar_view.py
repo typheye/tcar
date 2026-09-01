@@ -55,7 +55,14 @@ class UDPReceiver(QThread):
                     try:
                         data, addr = self.sock.recvfrom(1024)
                         self.network_delay.emit((time.monotonic() - request_started) * 1000.0)
-                        if len(data) == 72:
+                        if len(data) == 84:
+                            values = list(struct.unpack('!21f', data))
+                            self.data_received.emit(values)
+                            if not self.connected:
+                                self.connected = True
+                                self.connection_status.emit(True)
+                                print("Connected")
+                        elif len(data) == 72:
                             values = list(struct.unpack('!18f', data))
                             self.data_received.emit(values)
                             if not self.connected:
@@ -308,6 +315,7 @@ class ThirdPersonView(QGLWidget):
     VEHICLE_MODEL_SIZE = 2.2
     GRID_RANGE_MM = 1000.0
     GRID_STEP_MM = 100.0
+    INITIAL_CAMERA = (45.0, 30.0, 8.0)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -338,6 +346,9 @@ class ThirdPersonView(QGLWidget):
         self.obstacle_target_mm = 5000.0
         self.obstacle_visible = False
         self.infrared_mask = 0
+        self.trajectory_enabled = False
+        self.display_trajectory = True
+        self.trajectory_points = []
         self.distance_texture = None
         self.distance_texture_label = None
         self.pitch = 0.0
@@ -348,6 +359,7 @@ class ThirdPersonView(QGLWidget):
         self.cam_yaw = 45.0
         self.cam_pitch = 30.0
         self.cam_distance = 8.0
+        self.target_cam_distance = self.cam_distance
         
         # 濠电姷鏁告慨鐢割敊閺嶎厼绐楁俊銈傚亾闁伙絿鍏樺畷绋课旈埀顒€顔忓┑鍥ヤ簻闁圭偓鍓氬褏绱撳鍕獢鐎殿喖顭烽弫鎰緞婵犲倸鏁ら梻浣圭湽閸ㄥ寮灞稿徍婵犲痉鏉库偓妤佹叏閻戣棄纾绘繛鎴炵瀹曞弶淇婇娆掝劅闁搞倖娲熼弻娑欑節閸曨偅鐝″┑鈩冨絻椤兘骞?
         self.last_mouse_x = 0
@@ -355,6 +367,7 @@ class ThirdPersonView(QGLWidget):
         self.is_dragging = False
         self.is_panning = False
         self.view_x = self.view_y = self.view_z = 0.0
+        self.target_view_x = self.target_view_y = self.target_view_z = 0.0
         
         # 闂傚倸鍊搁崐鐑芥倿閿曞倹鍎戠憸鐗堝笒閺勩儵鏌涢弴銊ョ仩闁搞劌鍊块獮鏍庨鈧俊鑲┾偓鐟版啞缁诲啴濡甸崟顖氱妞ゆ牗顨呮禍楣冩煙?
         self.frame_count = 0
@@ -528,21 +541,47 @@ class ThirdPersonView(QGLWidget):
             dx = event.x() - self.last_mouse_x
             dy = event.y() - self.last_mouse_y
             yaw = math.radians(self.cam_yaw)
-            scale = self.cam_distance * 0.0018
-            self.view_x -= math.cos(yaw) * dx * scale
-            self.view_z += math.sin(yaw) * dx * scale
-            self.view_y += dy * scale
+            scale = max(0.001, self.cam_distance * 0.00125)
+            self.target_view_x -= math.cos(yaw) * dx * scale
+            self.target_view_z += math.sin(yaw) * dx * scale
+            self.target_view_y += dy * scale
             self.last_mouse_x = event.x()
             self.last_mouse_y = event.y()
 
     def wheelEvent(self, event):
-        delta = event.angleDelta().y()
-        self.cam_distance -= delta * 0.01
-        self.cam_distance = max(2.0, min(20.0, self.cam_distance))
+        steps = event.angleDelta().y() / 120.0
+        # Multiplicative zoom feels consistent near and far. Interpolation in
+        # paintGL removes the old wheel-notch jump.
+        self.target_cam_distance *= math.pow(0.86, steps)
+        self.target_cam_distance = max(0.65, min(80.0, self.target_cam_distance))
+
+    def set_camera_preset(self, preset):
+        presets = {
+            "reset": self.INITIAL_CAMERA,
+            "above": (0.0, 89.0, 10.0),
+            "front": (180.0, 8.0, 7.0),
+            "rear": (0.0, 8.0, 7.0),
+            "left": (-90.0, 8.0, 7.0),
+            "right": (90.0, 8.0, 7.0),
+            "isometric": (45.0, 35.0, 10.0),
+        }
+        if preset not in presets:
+            raise ValueError("unknown camera preset")
+        yaw, pitch, distance = presets[preset]
+        self.cam_yaw, self.cam_pitch = yaw, pitch
+        self.target_cam_distance = distance
+        self.target_view_x = self.target_view_y = self.target_view_z = 0.0
+
+    def reset_camera(self):
+        self.set_camera_preset("reset")
 
     def paintGL(self):
         # 婵犵數濮撮惀澶愬级鎼存挸浜炬俊銈勭劍閸欏繘鏌ｉ幋锝嗩棄缁炬儳顭烽弻锝呂熼懡銈冨仦闂佸搫顑呯粔褰掑蓟閿熺姴鐐婇柍杞扮悼閵忋倖鐓曢柕濠忓缁犵偤鏌＄仦璇插鐎殿噮鍣ｅ畷鍫曗€栭鑺ュ磳闁哄本绋戦埢搴ょ疀閺囩媭鍟嬮梻浣告惈閻ジ宕伴幘璺哄灊婵炲棙鍨跺畷澶愭煏婵炲灝鍔氶柟鐣屾暬濮?
         smooth = 0.25
+        self.cam_distance += (self.target_cam_distance - self.cam_distance) * 0.22
+        self.view_x += (self.target_view_x - self.view_x) * 0.28
+        self.view_y += (self.target_view_y - self.view_y) * 0.28
+        self.view_z += (self.target_view_z - self.view_z) * 0.28
         self.cube_yaw += (self.target_cube_yaw - self.cube_yaw) * smooth
         self.cube_pitch += (self.target_cube_pitch - self.cube_pitch) * smooth
         self.cube_roll += (self.target_cube_roll - self.cube_roll) * smooth
@@ -570,6 +609,8 @@ class ThirdPersonView(QGLWidget):
         
         # 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸绾惧綊鏌ｉ幋锝呅撻柛濠傛健閺屻劑寮撮悙娴嬪亾瑜版帒鐤炬い蹇撶墛閳锋帒霉閿濆牊顏犻柕鍡楋躬閺岋繝宕ㄩ鍓х厜闂侀潧妫楅崯鏉戠暦婵傜顫呴柍钘夋缂嶆姊绘担鍛婃儓闁哥噥鍋婇幃褔宕卞▎鎴滅瑝闂佹寧绻傞ˇ浼存偂閻斿吋鐓欓柟娈垮枛椤ｅ吋绻涢幊宄板娴?+ 闂傚倸鍊搁崐鎼佸磹閻戣姤鍤勯柛顐ｆ穿缂嶆牠鎮楅敐搴℃灈缂佲偓鐎ｎ偁浜滈柟鎵虫櫅閻掔儤绻涢崗鍏碱棃婵﹦绮幏鍛存惞閻熸壆顐奸梻浣虹帛椤ㄥ繘宕㈤幆褜鍤楀┑鐘叉搐缁犳氨鎲稿鍫熷€?(闂傚倸鍊搁崐鎼佸磹妞嬪海鐭嗗〒姘ｅ亾妤犵偛顦甸崹楣冨箛娴ｇ懓鍏婇梻渚€娼ц噹闁告洦鍓氶鍥ㄧ節瀵伴攱婢橀埀顒佹礋楠炲﹥鎯旈敐鍥紡?
         self.draw_grid_with_axes()
+        if self.trajectory_enabled and self.display_trajectory:
+            self._draw_trajectory()
         
         # 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸绾惧綊鏌ｉ幋锝呅撻柛濠傛健閺屻劑寮撮悙娴嬪亾瑜版帒鐤炬い蹇撶墛閳锋帒霉閿濆牊顏犻柕鍡楋躬閺岋繝宕ㄩ鍓х厜闂侀潧妫楅崯鏉戠暦婵傜顫呴柣妯垮皺娴滀即姊绘担绋挎毐闁圭⒈鍋婂畷顖炴偐鐠囪尙锛涢梺鐟板⒔缁垶寮查弻銉ョ缂侇喖鍘滈崑鎾绘嚑椤掆偓閸ゎ剟姊婚崒娆掑厡缂侇噮鍨堕獮鎰節濮橆厼浠梺闈涱槴閺呮粎绮?(婵犵數濮烽弫鍛婃叏閻㈠壊鏁婇柡宥庡幖缁愭淇婇妶鍛殲鐎规洘鐓￠弻鐔兼焽閿曗偓閺嬨倗绱掗埀顒佺節閸嬵垰缍婇弫鎰板川椤撗勵棏闂備胶绮敮濠勫垝濞嗘挸钃熼柨婵嗘啒閺冨牆鐒垫い鎺戝閸嬪绻濇繝鍌氭殧闁逞屽墯鐢€崇暦婵傜鍗抽柣鏂挎惈楠炲牓姊绘担鍛婃儓婵炲眰鍨藉畷婵嗙暆閸曨偄鍤戝┑鐐村灦閻燂絾绂?
         self.draw_vehicle_model()
@@ -808,6 +849,31 @@ class ThirdPersonView(QGLWidget):
             glEnd()
         glEnable(GL_LIGHTING)
 
+    def set_trajectory_position(self, x, y, z):
+        # Telemetry coordinates are millimetres.  Use the exact same scale as
+        # the 188 mm STL, grid and ultrasonic obstacle plane.  The previous
+        # hard-coded /500 scale made trajectory movement about 5.85x too
+        # small relative to the vehicle and its 100 mm grid cells.
+        scale = self.vehicle_units_per_mm
+        self.cube_x, self.cube_y, self.cube_z = x * scale, 0.0, z * scale
+        point = (self.cube_x, self.cube_y, self.cube_z)
+        if not self.trajectory_points or math.dist(point, self.trajectory_points[-1]) > 0.015:
+            self.trajectory_points.append(point)
+            self.trajectory_points = self.trajectory_points[-4000:]
+
+    def reset_trajectory(self):
+        self.cube_x = self.cube_y = self.cube_z = 0.0
+        self.trajectory_points.clear()
+        self.reset_camera()
+
+    def _draw_trajectory(self):
+        if len(self.trajectory_points) < 2:
+            return
+        glDisable(GL_LIGHTING); glColor4f(0.10, 0.78, 1.0, 0.82); glLineWidth(2.0)
+        glBegin(GL_LINE_STRIP)
+        for point in self.trajectory_points: glVertex3f(*point)
+        glEnd(); glEnable(GL_LIGHTING)
+
     def _draw_obstacle_plane(self):
         if not self.obstacle_visible:
             return
@@ -815,8 +881,9 @@ class ThirdPersonView(QGLWidget):
             self.vehicle_front_z
             - self.obstacle_distance_mm * self.vehicle_units_per_mm
         )
-        grid_extent = self.GRID_RANGE_MM * self.vehicle_units_per_mm
-        if abs(plane_z) > grid_extent:
+        # Infinite trajectory grid is visual only. Sonar keeps the original
+        # finite 1000 mm reference range.
+        if self.obstacle_distance_mm > self.GRID_RANGE_MM:
             return
         half_width, bottom, full_top = self.vehicle_obstacle_bounds
         # The ultrasonic sensor is mounted below the camera. Represent only
@@ -951,23 +1018,48 @@ class ThirdPersonView(QGLWidget):
         # ===== 缂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸绾惧綊鏌熼梻瀵割槮闁汇値鍠楅妵鍕冀椤愵澀绮堕梺鎼炲妼閸婂潡寮诲☉銏╂晝闁挎繂妫涢ˇ銊╂⒑?=====
         glLineWidth(1.0)
 
-        grid_size = int(round(self.GRID_RANGE_MM / self.GRID_STEP_MM))
         spacing = self.GRID_STEP_MM * self.vehicle_units_per_mm
-        extent = self.GRID_RANGE_MM * self.vehicle_units_per_mm
+        if self.trajectory_enabled:
+            # Recenter a finite batch of lines on the current view target. As
+            # the vehicle/camera moves, new cells appear continuously, giving
+            # an unbounded plane without sending millions of GL vertices.
+            center_x = self.cube_x + self.view_x
+            center_z = self.cube_z + self.view_z
+            radius = max(18.0, min(96.0, self.cam_distance * 1.7))
+            start_x = math.floor((center_x - radius) / spacing)
+            end_x = math.ceil((center_x + radius) / spacing)
+            start_z = math.floor((center_z - radius) / spacing)
+            end_z = math.ceil((center_z + radius) / spacing)
+            min_x, max_x = start_x * spacing, end_x * spacing
+            min_z, max_z = start_z * spacing, end_z * spacing
+        else:
+            grid_size = int(round(self.GRID_RANGE_MM / self.GRID_STEP_MM))
+            start_x = start_z = -grid_size
+            end_x = end_z = grid_size
+            min_x = min_z = -self.GRID_RANGE_MM * self.vehicle_units_per_mm
+            max_x = max_z = self.GRID_RANGE_MM * self.vehicle_units_per_mm
         
         glBegin(GL_LINES)
-        for i in range(-grid_size, grid_size + 1):
+        for i in range(start_x, end_x + 1):
             pos = i * spacing
-            if abs(i) == grid_size:
+            if not self.trajectory_enabled and i in (start_x, end_x):
                 glColor4f(0.25, 0.53, 0.78, 0.72)
             elif i % 5 == 0:
                 glColor4f(0.20, 0.42, 0.64, 0.58)
             else:
                 glColor4f(0.14, 0.29, 0.45, 0.42)
-            glVertex3f(pos, -0.5, -extent)
-            glVertex3f(pos, -0.5, extent)
-            glVertex3f(-extent, -0.5, pos)
-            glVertex3f(extent, -0.5, pos)
+            glVertex3f(pos, -0.5, min_z)
+            glVertex3f(pos, -0.5, max_z)
+        for i in range(start_z, end_z + 1):
+            pos = i * spacing
+            if not self.trajectory_enabled and i in (start_z, end_z):
+                glColor4f(0.25, 0.53, 0.78, 0.72)
+            elif i % 5 == 0:
+                glColor4f(0.20, 0.42, 0.64, 0.58)
+            else:
+                glColor4f(0.14, 0.29, 0.45, 0.42)
+            glVertex3f(min_x, -0.5, pos)
+            glVertex3f(max_x, -0.5, pos)
         glEnd()
         
         # ===== 闂傚倸鍊搁崐鎼佸磹閻戣姤鍤勯柛顐ｆ穿缂嶆牠鎮楅敐搴℃灈缂佲偓鐎ｎ偁浜滈柟鎵虫櫅閻掔儤绻涢崗鍏碱棃婵﹦绮幏鍛存惞閻熸壆顐奸梻浣虹帛椤ㄥ繘宕㈤幆褜鍤楀┑鐘叉搐缁犳氨鎲稿鍫熷€?(闂傚倸鍊搁崐鎼佸磹妞嬪孩顐芥慨姗嗗墻閻掍粙鏌ゆ慨鎰偓鏍偓姘煼閺岋綁寮崒姘粯缂備讲鍋撳鑸靛姈閸婂爼鏌ｉ幇顒傛憼闁诲浚鍣ｉ弻銈夊级閹稿骸浠撮梺鍝勭灱閸犳挾妲愰幒妤€顫呴柣妯虹－娴滆埖淇婇悙顏勨偓鎴﹀磿闁秵鍋嬪┑鐘叉搐妗呴梺鍛婃处閸ㄥジ寮崘鈹夸簻闁规壋鏅涢悘鈺冪磼閻樺樊鐓兼慨? =====

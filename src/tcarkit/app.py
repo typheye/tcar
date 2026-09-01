@@ -211,7 +211,7 @@ class IPDialog(QDialog):
             self._authenticate(ip)
             sock.sendto(b"get_data", (ip, 8888))
             packet, _ = sock.recvfrom(1024)
-            if len(packet) not in (40, 56, 60, 64, 68, 72):
+            if len(packet) not in (40, 56, 60, 64, 68, 72, 84):
                 raise RuntimeError(f"Unexpected telemetry packet: {len(packet)} bytes")
             self._resolved_ip = ip
             super().accept()
@@ -425,6 +425,40 @@ class TCarKitWindow(QMainWindow):
         file_menu.addAction(exit_action)
 
         self._edit_menu = self.menuBar().addMenu("Edit(&E)")
+        self._trajectory_menu = QMenu("Trajectory Space", self)
+        self._trajectory_enable = QAction("Enable", self, checkable=True)
+        trajectory_enabled = self._read_bool_setting("home/trajectory/enabled", False)
+        self._trajectory_enable.setChecked(trajectory_enabled)
+        self._trajectory_enable.toggled.connect(self._set_trajectory_enabled)
+        self._trajectory_menu.addAction(self._trajectory_enable)
+        self._trajectory_menu.addSeparator()
+        self._trajectory_display = QAction("Display trajectory", self, checkable=True)
+        self._trajectory_display.setChecked(self._read_bool_setting("home/trajectory/display", True))
+        self._trajectory_display.toggled.connect(self._set_trajectory_display)
+        self._trajectory_menu.addAction(self._trajectory_display)
+        self._trajectory_reset = QAction("Reset", self)
+        self._trajectory_reset.triggered.connect(self._reset_trajectory)
+        self._trajectory_menu.addAction(self._trajectory_reset)
+        self._camera_menu = QMenu("Camera", self)
+        for label, preset in (
+            ("Reset", "reset"),
+            ("Directly Above", "above"),
+            ("Straight Ahead", "front"),
+            ("Rear", "rear"),
+            ("Left Side", "left"),
+            ("Right Side", "right"),
+            ("Isometric", "isometric"),
+        ):
+            action = QAction(label, self)
+            action.setData(preset)
+            action.triggered.connect(
+                lambda _checked=False, value=preset: self.home.set_camera_preset(value)
+            )
+            self._camera_menu.addAction(action)
+        self._update_trajectory_actions(trajectory_enabled)
+        self.home.set_trajectory_enabled(trajectory_enabled)
+        self.vision.set_trajectory_enabled(trajectory_enabled)
+        self.home.set_display_trajectory(self._trajectory_display.isChecked())
         self._debug_menu = QMenu("Debug Information", self)
         self._show_debug = QAction("Show", self, checkable=True)
         show_debug = self._read_bool_setting("vision/debug/show", False)
@@ -502,6 +536,31 @@ class TCarKitWindow(QMainWindow):
         else:
             self.vision.set_debug_metric(option, enabled)
 
+    def _update_trajectory_actions(self, enabled):
+        self._trajectory_display.setEnabled(bool(enabled))
+        self._trajectory_reset.setEnabled(bool(enabled))
+
+    def _set_trajectory_enabled(self, enabled):
+        self._settings.setValue("home/trajectory/enabled", bool(enabled))
+        self._update_trajectory_actions(enabled)
+        self.home.set_trajectory_enabled(enabled)
+        self.vision.set_trajectory_enabled(enabled)
+
+    def _set_trajectory_display(self, enabled):
+        self._settings.setValue("home/trajectory/display", bool(enabled))
+        self.home.set_display_trajectory(enabled)
+
+    def _reset_trajectory(self):
+        answer = QMessageBox.question(
+            self, "tCarKit", "Reset trajectory space to the origin?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            self.home.reset_trajectory()
+            self.vision.set_trajectory_enabled(
+                self._trajectory_enable.isChecked()
+            )
+
     def _on_theme(self, action):
         self._theme_mode = action.data()
         self._settings.setValue("theme/mode", self._theme_mode)
@@ -531,6 +590,10 @@ class TCarKitWindow(QMainWindow):
         self.performance.set_active(active_name == "Performance")
         if active_name == "Vision":
             self._edit_menu.addMenu(self._debug_menu)
+            self._edit_menu.menuAction().setVisible(True)
+        elif active_name == "Home":
+            self._edit_menu.addMenu(self._trajectory_menu)
+            self._edit_menu.addMenu(self._camera_menu)
             self._edit_menu.menuAction().setVisible(True)
         else:
             self._edit_menu.menuAction().setVisible(False)

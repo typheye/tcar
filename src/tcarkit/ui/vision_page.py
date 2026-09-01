@@ -52,6 +52,8 @@ class VisionPage(QWidget):
         self.debug_fps = True
         self.debug_frame_delay = True
         self.debug_network_delay = False
+        self.trajectory_enabled = False
+        self.trajectory_position_mm = (0.0, 0.0, 0.0)
 
         # Animate heading at display cadence while sensor targets and battery
         # values remain filtered independently.
@@ -142,6 +144,16 @@ class VisionPage(QWidget):
         if math.isfinite(mag):
             mag %= 360.0
             self._sample_magnetic_sync(yaw, mag, time.monotonic())
+        if len(data) >= 21:
+            position = (float(data[18]), 0.0, float(data[20]))
+            if all(math.isfinite(value) for value in position):
+                self.trajectory_position_mm = position
+
+    def set_trajectory_enabled(self, enabled):
+        self.trajectory_enabled = bool(enabled)
+        # Enable changes define a new home at the current origin.
+        self.trajectory_position_mm = (0.0, 0.0, 0.0)
+        self.update()
 
     def _sample_magnetic_sync(self, gyro_yaw, magnetic_heading, now):
         needs_sync = (
@@ -422,6 +434,7 @@ class VisionPage(QWidget):
         painter.setBrush(QColor(205, 205, 205, 230))
         painter.drawEllipse(center, radius, radius)
         if not self.gyro_ready:
+            self._draw_home_marker(painter, rect, center)
             return
         heading = self._camera_heading()
         angle = math.radians(heading - 90.0)
@@ -460,6 +473,36 @@ class VisionPage(QWidget):
         painter.setPen(QPen(QColor(255, 255, 255, 225), 2))
         painter.setBrush(QColor(205, 205, 205, 230))
         painter.drawEllipse(center, radius, radius)
+        self._draw_home_marker(painter, rect, center)
+
+    def _draw_home_marker(self, painter, rect, center):
+        if not self.trajectory_enabled:
+            return
+        x_mm, _y_mm, z_mm = self.trajectory_position_mm
+        home_x, home_z = -x_mm, -z_mm
+        distance = math.hypot(home_x, home_z)
+        if distance < 1.0:
+            return
+        # Map top is world north (-Z). One map radius represents the Home
+        # grid's 1000 mm half-extent; farther homes remain visible at the edge.
+        usable = rect.width() * 0.5 - 14.0
+        map_scale = usable / 1000.0
+        screen_x = home_x * map_scale
+        screen_y = home_z * map_scale
+        length = math.hypot(screen_x, screen_y)
+        if length > usable:
+            screen_x *= usable / length
+            screen_y *= usable / length
+        point = QPointF(center.x() + screen_x, center.y() + screen_y)
+        marker = QPainterPath()
+        marker.moveTo(point.x(), point.y() - 7.0)
+        marker.lineTo(point.x() + 7.0, point.y())
+        marker.lineTo(point.x(), point.y() + 7.0)
+        marker.lineTo(point.x() - 7.0, point.y())
+        marker.closeSubpath()
+        painter.setPen(QPen(QColor(255, 255, 255, 235), 1.5))
+        painter.setBrush(QColor(80, 205, 255, 235))
+        painter.drawPath(marker)
 
     def _draw_debug(self, painter):
         if not self.debug_visible:
