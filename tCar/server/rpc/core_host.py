@@ -2,11 +2,13 @@
 """Discover and cache the current Core host address from the car router."""
 
 import json
+import socket
 import threading
 import time
 from urllib.request import urlopen
 
 ROUTER_STATUS_URL = "http://192.168.66.1/test"
+WIRED_CORE_HOST = "192.168.166.100"
 _lock = threading.RLock()
 _cached_ip = None
 _cached_at = 0.0
@@ -16,6 +18,16 @@ def get_core_host(force=False, timeout=1.0):
     global _cached_ip, _cached_at
     now = time.monotonic()
     with _lock:
+        # The private zero2w <-> 4B Ethernet link is the most stable route
+        # and must keep working even when the car WLAN/router is unavailable.
+        try:
+            with socket.create_connection(
+                (WIRED_CORE_HOST, 9030), timeout=min(max(timeout, 0.1), 0.35)
+            ):
+                _cached_ip, _cached_at = WIRED_CORE_HOST, now
+                return WIRED_CORE_HOST
+        except OSError:
+            pass
         if not force and _cached_ip and now - _cached_at < 10.0:
             return _cached_ip
         with urlopen(ROUTER_STATUS_URL, timeout=timeout) as response:
@@ -31,4 +43,3 @@ def get_core_host(force=False, timeout=1.0):
 
 def core_url(port, path=""):
     return f"http://{get_core_host()}:{int(port)}{path}"
-

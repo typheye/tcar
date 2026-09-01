@@ -17,6 +17,41 @@ class LCDController:
         self.device = device
         self.canvas = None
         self.current_image = None
+        self._low_battery_provider = None
+        self._low_battery_image = None
+
+    def set_low_battery_provider(self, provider):
+        self._low_battery_provider = provider
+
+    def _low_battery_active(self):
+        try:
+            return bool(self._low_battery_provider and self._low_battery_provider())
+        except Exception:
+            return False
+
+    def _get_low_battery_image(self):
+        if self._low_battery_image is None:
+            # Use the approved artwork itself so its proportions, cold-white
+            # halo and warm low-charge glow survive exactly as designed.
+            artwork_path = "./media/low_battery.png"
+            try:
+                image = Image.open(artwork_path).convert("RGB")
+                if image.size == (SCREEN_WIDTH, SCREEN_HEIGHT):
+                    self._low_battery_image = image
+                else:
+                    resampling = getattr(Image, "Resampling", Image).LANCZOS
+                    self._low_battery_image = image.resize(
+                        (SCREEN_WIDTH, SCREEN_HEIGHT), resampling
+                    )
+            except (OSError, ValueError):
+                # Fail safely to a black screen if the artwork is damaged.
+                self._low_battery_image = Image.new(
+                    "RGB", (SCREEN_WIDTH, SCREEN_HEIGHT), COLOR_BLACK
+                )
+        return self._low_battery_image
+
+    def _output_image(self, image):
+        return self._get_low_battery_image() if self._low_battery_active() else image
         
     def create_canvas(self):
         """创建画布上下文管理器"""
@@ -30,23 +65,38 @@ class LCDController:
                 return self
 
             def __exit__(self, exc_type, exc_val, exc_tb):
-                self.lcd.device.ShowImage(self.image, 0, 0)
-                self.lcd.current_image = self.image
+                output = self.lcd._output_image(self.image)
+                self.lcd.device.ShowImage(output, 0, 0)
+                self.lcd.current_image = output
                 pass
 
         return Canvas(self)
     
     def clear(self):
         """清屏"""
-        self.device.clear()
+        if self._low_battery_active():
+            output = self._get_low_battery_image()
+            self.device.ShowImage(output, 0, 0)
+            self.current_image = output
+        else:
+            self.device.clear()
         
     def show_image(self, image, x=0, y=0):
         """显示图像"""
-        self.device.ShowImage(image, x, y)
+        output = self._output_image(image)
+        if output is not image:
+            x, y = 0, 0
+        self.device.ShowImage(output, x, y)
+        self.current_image = output
 
     def show_image_fast(self, image, cam_fps=0, disp_fps=0):
         """显示图像"""
-        self.device.ShowImageFast(image, cam_fps=cam_fps, disp_fps=disp_fps)
+        output = self._output_image(image)
+        if output is not image:
+            # Do not let the fast camera path add diagnostics over the lock screen.
+            cam_fps, disp_fps = 0, 0
+        self.device.ShowImageFast(output, cam_fps=cam_fps, disp_fps=disp_fps)
+        self.current_image = output
         
     def show_logo(self):
         """显示启动Logo"""
@@ -54,7 +104,8 @@ class LCDController:
             canvas.draw.rectangle((0, 0, SCREEN_WIDTH, SCREEN_HEIGHT), fill=COLOR_BLACK)
             try:
                 img = Image.open("./media/splash.png").convert("RGBA")
-                img = img.resize((SCREEN_WIDTH, SCREEN_HEIGHT), Image.ANTIALIAS)
+                if img.size != (SCREEN_WIDTH, SCREEN_HEIGHT):
+                    img = img.resize((SCREEN_WIDTH, SCREEN_HEIGHT), Image.ANTIALIAS)
                 canvas.draw.bitmap((0, 0), img, fill=None)
             except Exception as e:
                 pass

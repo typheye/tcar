@@ -4,7 +4,9 @@
 import time
 import traceback
 import spidev as SPI  # 添加SPI导入
-from server.gui.public.utils import log, setup_gpio, press_key, wait_release
+from server.gui.public.utils import (
+    log, setup_gpio, press_key, wait_release, set_input_lockout_provider,
+)
 from server.gui.public.lcd_controller import DisplayManager
 from hardware.buttons import ButtonManager
 from hardware.ina219 import INA219
@@ -41,6 +43,12 @@ class GUI:
             # 初始化管理器
             self.system_info = SystemInfo()
             self.network_status = NetworkStatus()
+            self.display.lcd.set_low_battery_provider(
+                self.network_status.is_low_battery_lockout
+            )
+            set_input_lockout_provider(
+                self.network_status.is_low_battery_lockout
+            )
 
             # 启动监控服务
             self.system_info.start_monitoring()

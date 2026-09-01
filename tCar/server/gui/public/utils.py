@@ -17,6 +17,21 @@ _online_cache = {
     "fail_count": 0,
 }
 
+_input_lockout_provider = None
+
+
+def set_input_lockout_provider(provider):
+    """Install a global input lock. The provider must be fast and non-blocking."""
+    global _input_lockout_provider
+    _input_lockout_provider = provider
+
+
+def input_locked():
+    try:
+        return bool(_input_lockout_provider and _input_lockout_provider())
+    except Exception:
+        return False
+
 def setup_gpio():
     """初始化GPIO引脚"""
     GPIO.setmode(GPIO.BCM)
@@ -40,8 +55,12 @@ def wait_release(pin, count=999999999999):
 
 def wait_press(pin):
     """等待按键按下并释放，返回是否按下"""
+    if input_locked():
+        return False
     flag = False
     while GPIO.input(pin) == 0:
+        if input_locked():
+            return False
         if not flag:
             flag = True
         time.sleep(0.001)
@@ -49,7 +68,7 @@ def wait_press(pin):
 
 def press_key(pin):
     """判断按键是否按下"""
-    return GPIO.input(pin) == 0
+    return not input_locked() and GPIO.input(pin) == 0
 
 def get_system_info():
     """获取系统信息"""

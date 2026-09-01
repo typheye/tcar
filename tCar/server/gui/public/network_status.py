@@ -24,6 +24,9 @@ class NetworkStatus:
         self.core_battery_info_status = False
         self.core_battery_info_voltage = -1
         self.core_battery_info_battery = -1
+        self._battery_lock = threading.Lock()
+        self.local_cable_status = False
+        self.router_core_status = False
 
     def start_monitoring(self):
         """开始监控网络状态"""
@@ -42,8 +45,10 @@ class NetworkStatus:
         """更新循环"""
         while self.running:
             try:
+                self.local_cable_status = self._get_local_cable_status()
                 self.core_status = get_core_status()
                 self._fetch_json_data()
+                self.router_core_status = self._get_router_core_status()
                 self._get_core_battery()
                 self._get_camera_status()
                 time.sleep(3)  # 每3秒更新一次
@@ -63,6 +68,24 @@ class NetworkStatus:
             self.json_data = None
             self.error_count += 1
             log(4, "获取网络数据失败:", str(e))
+
+    @staticmethod
+    def _get_local_cable_status():
+        """Return the physical carrier state of the private Ethernet link."""
+        try:
+            with open("/sys/class/net/eth0/carrier", "r", encoding="ascii") as handle:
+                return handle.read().strip() == "1"
+        except OSError:
+            return False
+
+    def _get_router_core_status(self):
+        """Use the ESP device table as an independent Core-host presence signal."""
+        if not isinstance(self.json_data, dict):
+            return False
+        for device in self.json_data.get("devices", []):
+            if device.get("name") == "Core host":
+                return bool(device.get("status", False))
+        return False
 
     def get_route_status(self):
         """获取路由器状态"""
@@ -125,7 +148,7 @@ class NetworkStatus:
         return "ERR", COLOR_YELLOW
 
     def _get_camera_status(self):
-        if self.core_status:
+        if self.local_cable_status or self.router_core_status or self.core_status:
             result = rpc_client.heartbeat()
 
             try:
@@ -149,37 +172,47 @@ class NetworkStatus:
 
     def _get_core_battery(self):
         """获取主机电池信息"""
-        status = False
-        voltage = -1
-        battery = -1
+        with self._battery_lock:
+            status = self.core_battery_info_status
+            voltage = self.core_battery_info_voltage
+            battery = self.core_battery_info_battery
 
         # 检查主机在线状态
-        if self.core_status:
+        if self.local_cable_status or self.router_core_status or self.core_status:
             try:
-                result = rpc_client.get_battery()
+                result = rpc_client.get_battery_status()
                 data = result.get("result") if result.get("success") else None
-                if isinstance(data, (list, tuple)) and len(data) >= 2 and data[0]:
-                    voltage = float(data[1]) / 1000.0
-                    battery = max(0.0, min(100.0, (voltage - 6.4) / 2.0 * 100.0))
+                payload = data[1] if isinstance(data, (list, tuple)) and len(data) >= 2 and data[0] else None
+                if isinstance(payload, dict):
+                    voltage = float(payload["voltage"])
+                    battery = max(0.0, min(100.0, float(payload["percent"])))
                     status = voltage > 5.0
 
             except Exception as e:
-                # 其他异常
-                status = False
-                voltage = -1
-                battery = -1
-                # print(f"获取电池信息异常: {e}", file=sys.stderr)
+                # Keep the last valid 4B sample through an isolated RPC
+                # timeout. Connection loss below clears it explicitly.
+                pass
         else:
             # 主机离线
             status = False
             voltage = -1
             battery = -1
 
-        (
-            self.core_battery_info_status,
-            self.core_battery_info_voltage,
-            self.core_battery_info_battery,
-        ) = (status, voltage, battery)
+        with self._battery_lock:
+            (
+                self.core_battery_info_status,
+                self.core_battery_info_voltage,
+                self.core_battery_info_battery,
+            ) = (status, voltage, battery)
+
+    def is_low_battery_lockout(self):
+        """Apply (wired carrier OR ESP online) AND 4B battery below 10%."""
+        with self._battery_lock:
+            return bool(
+                (self.local_cable_status or self.router_core_status)
+                and self.core_battery_info_status
+                and 0.0 <= self.core_battery_info_battery < 10.0
+            )
 
     def get_central_status(self):
         """获取中枢状态"""

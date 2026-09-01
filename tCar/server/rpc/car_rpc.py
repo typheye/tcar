@@ -26,6 +26,7 @@ class CarRPC:
             "FinishFunc": {"type": "positional", "params": []},
             "GetRunningFunc": {"type": "positional", "params": []},
             "GetBatteryVoltage": {"type": "positional", "params": []},
+            "GetBatteryStatus": {"type": "positional", "params": []},
             "GetSonarDistance": {"type": "positional", "params": []},
             "GetSystemInfo": {"type": "positional", "params": []},
             "HardwareSelfTest": {"type": "positional", "params": []},
@@ -209,6 +210,10 @@ class CarRPC:
     def get_battery(self):
         """获取电池电压"""
         return self.call("GetBatteryVoltage")
+
+    def get_battery_status(self):
+        """获取由 4B 稳定滤波后计算的完整电池状态。"""
+        return self.call("GetBatteryStatus")
     
     def get_distance(self):
         """获取超声波距离"""
