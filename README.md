@@ -1,4 +1,14 @@
-# Zero2W Car Device
+<div align="center">
+
+# tCar · Car Device
+
+**Raspberry Pi Zero 2W 摄像头与副机服务**
+
+[![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi%20Zero%202W-red.svg)]()
+[![Language](https://img.shields.io/badge/Language-Python%203-blue.svg)]()
+[![Status](https://img.shields.io/badge/Status-Active-brightgreen.svg)]()
+
+</div>
 
 ## 职责
 
