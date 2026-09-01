@@ -284,7 +284,6 @@ class ControlService:
         arrival_radius_mm = 110.0
         obstacle_stop_mm = 320.0
         clear_mm = 430.0
-        avoidance_sign = 1.0
 
         try:
             while time.monotonic() < navigation_deadline:
@@ -327,30 +326,12 @@ class ControlService:
                     obstacle_mm = 5000.0
                 if 30.0 <= obstacle_mm < obstacle_stop_mm:
                     self.motors.brake()
-                    # Turn away in alternating directions until the fixed
-                    # forward sonar sees a clear route, then recalculate home.
-                    current = self.mpu.snapshot()["heading"]
-                    probe = (current + avoidance_sign * 65.0) % 360.0
-                    avoidance_sign *= -1.0
-                    self._turn_to_heading(
-                        probe,
-                        deadline=min(navigation_deadline, time.monotonic() + 8.0),
+                    self._avoid_obstacle(
+                        heading,
+                        navigation_deadline,
+                        obstacle_stop_mm,
+                        clear_mm,
                     )
-                    try:
-                        if float(self.sonar.distance_mm()) < clear_mm:
-                            continue
-                    except (OSError, RuntimeError, ValueError):
-                        pass
-                    # A short, confirmed detour creates clearance without
-                    # committing to a long blind segment.
-                    detour_end = min(navigation_deadline, time.monotonic() + 0.7)
-                    while time.monotonic() < detour_end:
-                        if self.operation_cancel.is_set():
-                            raise RuntimeError("return home cancelled")
-                        self.motors.authorize()
-                        self.motors.drive(30.0, 90.0, 0.0)
-                        threading.Event().wait(0.025)
-                    self.motors.brake()
                     continue
 
                 speed = 30.0 if distance_home < 350.0 else 38.0
@@ -361,3 +342,66 @@ class ControlService:
             raise RuntimeError("return home timed out")
         finally:
             self.motors.brake()
+
+    def _safe_sonar_distance(self):
+        try:
+            value = float(self.sonar.distance_mm())
+            return value if 30.0 <= value <= 5000.0 else 5000.0
+        except (OSError, RuntimeError, ValueError):
+            return 5000.0
+
+    def _avoid_obstacle(self, approach_heading, navigation_deadline,
+                        obstacle_stop_mm, clear_mm):
+        """Scan both sides once, then commit to one continuous detour."""
+        scan_offset = 55.0
+        scans = []
+        for side in (-1.0, 1.0):
+            if self.operation_cancel.is_set():
+                raise RuntimeError("return home cancelled")
+            probe = (approach_heading + side * scan_offset) % 360.0
+            self._turn_to_heading(
+                probe,
+                deadline=min(navigation_deadline, time.monotonic() + 7.0),
+            )
+            threading.Event().wait(0.12)
+            scans.append((self._safe_sonar_distance(), side, probe))
+
+        # Prefer measurable clearance; equal/invalid readings consistently
+        # choose the left side for this entire detour instead of oscillating.
+        clearance, side, detour_heading = max(
+            scans, key=lambda item: (item[0], -item[1])
+        )
+        self.log.info(
+            "return home detour %s, clearance %.0f mm",
+            "left" if side < 0.0 else "right", clearance,
+        )
+        self._turn_to_heading(
+            detour_heading,
+            deadline=min(navigation_deadline, time.monotonic() + 7.0),
+        )
+
+        # Maintain the chosen side long enough to create lateral separation.
+        # If another face blocks the path, turn farther around the same side;
+        # never reverse side inside this detour.
+        detour_started = time.monotonic()
+        detour_deadline = min(navigation_deadline, detour_started + 4.0)
+        last_heading = detour_heading
+        while time.monotonic() < detour_deadline:
+            if self.operation_cancel.is_set():
+                raise RuntimeError("return home cancelled")
+            front = self._safe_sonar_distance()
+            if front < obstacle_stop_mm:
+                self.motors.brake()
+                last_heading = (last_heading + side * 32.0) % 360.0
+                self._turn_to_heading(
+                    last_heading,
+                    deadline=min(navigation_deadline, time.monotonic() + 6.0),
+                )
+                continue
+            elapsed = time.monotonic() - detour_started
+            if elapsed >= 1.15 and front >= clear_mm:
+                break
+            self.motors.authorize()
+            self.motors.drive(32.0, 90.0, 0.0)
+            threading.Event().wait(0.025)
+        self.motors.brake()

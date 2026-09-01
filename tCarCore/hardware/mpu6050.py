@@ -34,6 +34,7 @@ class MPU6050:
         self.position = [0.0, 0.0, 0.0]
         self.velocity = [0.0, 0.0, 0.0]
         self.trajectory_enabled = False
+        self.trajectory_epoch = 0
         self._accel_reference = [0.0, 0.0, -1.0]
         self._motion_provider = None
         self._planar_accel_lp = [0.0, 0.0]
@@ -110,6 +111,7 @@ class MPU6050:
 
     def reset_trajectory(self):
         with self.lock:
+            self.trajectory_epoch = (self.trajectory_epoch + 1) % 1000000
             self.position = [0.0, 0.0, 0.0]
             self.velocity = [0.0, 0.0, 0.0]
             self._planar_accel_lp = [0.0, 0.0]
@@ -261,4 +263,5 @@ class MPU6050:
                     "heading": (-self.yaw) % 360.0, "quaternion": self.quaternion,
                     "accel": self.accel, "gyro": self.gyro,
                     "position_mm": tuple(self.position),
+                    "trajectory_epoch": self.trajectory_epoch,
                     "trajectory_enabled": self.trajectory_enabled}
