@@ -147,12 +147,18 @@ class CarRPC:
         try:
             host = self.host or get_core_host()
             base_url = f"http://{host}:{self.port}{self.endpoint}"
+            # HardwareSelfTest intentionally moves both servos sequentially
+            # and then exercises four motors. It normally takes around four
+            # seconds, so the common two-second RPC timeout reports a false
+            # failure immediately after the gimbal finishes moving. Keep a
+            # short connect timeout but allow this one operation to complete.
+            timeout = (2, 35) if method == "HardwareSelfTest" else 2
             # 发送POST请求
             response = requests.post(
                 base_url,
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=2
+                timeout=timeout
             )
             
             # 检查响应状态

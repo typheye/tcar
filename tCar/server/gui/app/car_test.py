@@ -69,8 +69,12 @@ class CarTest:
                                       and len(envelope) >= 2 and envelope[0]
                                       and isinstance(envelope[1], dict)
                                       and envelope[1].get("ok"))
+                            if not result.get("success"):
+                                message = "自检通信失败"
+                            else:
+                                message = "自检完成" if passed else "自检发现异常"
                             self.show_ui, self.show_ui_msg, self.show_ui_disable = (
-                                1, "自检完成" if passed else "自检发现异常", False
+                                1, message, False
                             )
                         else:
                             self.show_ui, self.show_ui_msg, self.show_ui_disable = (

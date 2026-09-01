@@ -56,5 +56,12 @@ FONT_BOLD = "/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf"
 # INA219地址
 INA219_ADDR = 0x43
 
+# Main battery: two 3500 mAh 18650 cells in series (2S). Series voltage
+# increases while capacity remains 3.5 Ah. Runtime is an estimate based on
+# the whole-car reference draw and can be tuned from field measurements.
+BATTERY_NOMINAL_VOLTAGE = 7.4
+BATTERY_CAPACITY_AH = 3.5
+CAR_REFERENCE_POWER_W = 12.0
+
 # JSON数据源URL
 JSON_DATA_URL = "http://192.168.66.1/test"

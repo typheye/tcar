@@ -103,7 +103,7 @@ class ScreenManager:
         central_status, central_color, central_value, central_value_color = (
             self.network_status.get_central_status()
         )
-        voltage, battery, battery_color = self.network_status.get_core_battery()
+        runtime, battery, battery_color = self.network_status.get_core_battery()
 
         # 警告卡片
         info1_card_x, info1_card_y = 20, 43
@@ -148,7 +148,7 @@ class ScreenManager:
             status_pyz=self.network_status.get_camera_status(),
         )
 
-        # 电压显示
+        # Estimated remaining runtime display
         voltage_card_x, voltage_card_y = 170, 43
         voltage_card_w, voltage_card_h = 50, 30
         Graphics.draw_rounded_rect(
@@ -162,7 +162,7 @@ class ScreenManager:
         )
         draw.text(
             (voltage_card_x + 6, voltage_card_y + 5),
-            voltage,
+            runtime,
             font=fonts.get_font("normal"),
             fill=COLOR_WHITE,
         )

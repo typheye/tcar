@@ -101,9 +101,18 @@ class NetworkStatus:
                 color = COLOR_YELLOW
             else:
                 color = COLOR_RED
-            return (f"{voltage:.1f} V", int(battery), color)
+            remaining_wh = (
+                BATTERY_NOMINAL_VOLTAGE
+                * BATTERY_CAPACITY_AH
+                * max(0.0, min(100.0, battery)) / 100.0
+            )
+            runtime_hours = (
+                remaining_wh / CAR_REFERENCE_POWER_W
+                if CAR_REFERENCE_POWER_W > 0 else 0.0
+            )
+            return (f"{runtime_hours:.1f} h", int(battery), color)
         else:
-            return (f"0.0 V", 0, COLOR_MID_BLUE)
+            return ("0.0 h", 0, COLOR_MID_BLUE)
 
     def _get_route_temperature(self):
         """获取路由器温度"""
