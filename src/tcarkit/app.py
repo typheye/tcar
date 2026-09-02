@@ -211,7 +211,7 @@ class IPDialog(QDialog):
             self._authenticate(ip)
             sock.sendto(b"get_data", (ip, 8888))
             packet, _ = sock.recvfrom(1024)
-            if len(packet) not in (40, 56, 60, 64, 68, 72, 84, 88):
+            if len(packet) not in (40, 56, 60, 64, 68, 72, 84, 88, 96):
                 raise RuntimeError(f"Unexpected telemetry packet: {len(packet)} bytes")
             self._resolved_ip = ip
             super().accept()

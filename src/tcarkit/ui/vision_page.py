@@ -15,29 +15,14 @@ from tcarkit.depends.tcar_view import CameraReceiver, UDPReceiver
 
 
 class VisionPage(QWidget):
-    MAG_SYNC_WINDOW_S = 1.5
-    MAG_RESYNC_INTERVAL_S = 15.0
-    MAG_SYNC_VALID_S = 45.0
-    MAG_SYNC_MIN_SAMPLES = 12
-    MAG_SYNC_MIN_CONFIDENCE = 0.90
-
     def __init__(self, ip, parent=None):
         super().__init__(parent)
         self.setMinimumSize(640, 360)
         self.frame = QImage()
         self.connected = False
-        self.gyro_heading = 0.0
-        self.gyro_target = 0.0
-        self.gyro_ready = False
-        self.heading_offset = None
-        self.mag_sync_samples = deque(maxlen=256)
-        self.mag_sync_started = None
-        self.mag_last_sample_time = None
-        self.mag_last_sync_time = None
-        self.camera_pan_angle = 0.0
-        self.camera_pan_target = 0.0
-        self.camera_pan_ready = False
-        self.last_inertial_yaw = None
+        self.camera_heading = 0.0
+        self.heading_ready = False
+        self.heading_absolute = False
         self.calibration_active = False
         self.battery_voltage = 0.0
         self.battery_percent = 0.0
@@ -56,13 +41,6 @@ class VisionPage(QWidget):
         self.trajectory_enabled = False
         self.trajectory_position_mm = (0.0, 0.0, 0.0)
         self.trajectory_epoch = None
-
-        # Animate heading at display cadence while sensor targets and battery
-        # values remain filtered independently.
-        self.hud_timer = QTimer(self)
-        self.hud_timer.setInterval(16)
-        self.hud_timer.timeout.connect(self._advance_hud)
-        self.hud_timer.start()
 
         self.receiver = UDPReceiver(ip=ip)
         self.receiver.data_received.connect(self._update_telemetry)
@@ -108,44 +86,17 @@ class VisionPage(QWidget):
     def _update_telemetry(self, data):
         if len(data) < 3:
             return
-        # 4B publishes clockwise compass heading separately from the
-        # counter-clockwise attitude yaw used by Home's quaternion scene.
-        if len(data) < 17:
+        # The 4B publishes the final camera heading. This client only renders
+        # it and never applies magnetic, axis, mounting or servo corrections.
+        if len(data) < 24:
             return
-        yaw = data[15]
-        camera_pan = data[16]
-        mag = data[14] if len(data) >= 15 else float("nan")
-        if not math.isfinite(yaw):
+        camera_heading = data[22]
+        heading_absolute = data[23]
+        if not math.isfinite(camera_heading):
             return
-        yaw %= 360.0
-
-        if self.last_inertial_yaw is not None:
-            yaw_step = (yaw - self.last_inertial_yaw + 180.0) % 360.0 - 180.0
-            # A real 35-degree jump cannot occur between normal telemetry
-            # packets. It indicates that attitude calibration reset yaw.
-            if abs(yaw_step) > 35.0:
-                self._reset_heading_states()
-        self.last_inertial_yaw = yaw
-
-        if not self.gyro_ready:
-            self.gyro_heading = yaw
-            self.gyro_target = yaw
-            self.gyro_ready = True
-        else:
-            self.gyro_target = yaw
-        if math.isfinite(camera_pan):
-            camera_pan = max(-90.0, min(90.0, camera_pan))
-            if not self.camera_pan_ready:
-                self.camera_pan_angle = camera_pan
-                self.camera_pan_ready = True
-            self.camera_pan_target = camera_pan
-
-        # The magnetometer periodically establishes absolute heading, but it
-        # never directly animates the HUD. Between syncs, smooth inertial yaw
-        # carries every turn without inheriting magnetic jitter.
-        if math.isfinite(mag):
-            mag %= 360.0
-            self._sample_magnetic_sync(yaw, mag, time.monotonic())
+        self.camera_heading = camera_heading % 360.0
+        self.heading_absolute = heading_absolute >= 0.5
+        self.heading_ready = True
         if len(data) >= 21:
             position = (float(data[18]), 0.0, float(data[20]))
             if all(math.isfinite(value) for value in position):
@@ -157,7 +108,7 @@ class VisionPage(QWidget):
             elif epoch != self.trajectory_epoch:
                 self.trajectory_epoch = epoch
                 self.trajectory_position_mm = (0.0, 0.0, 0.0)
-                self.update()
+        self.update()
 
     def set_trajectory_enabled(self, enabled):
         self.trajectory_enabled = bool(enabled)
@@ -165,83 +116,27 @@ class VisionPage(QWidget):
         self.trajectory_position_mm = (0.0, 0.0, 0.0)
         self.update()
 
-    def _sample_magnetic_sync(self, gyro_yaw, magnetic_heading, now):
-        needs_sync = (
-            self.heading_offset is None
-            or self.mag_last_sync_time is None
-            or now - self.mag_last_sync_time >= self.MAG_RESYNC_INTERVAL_S
-        )
-        if not needs_sync:
-            return
-        if (self.mag_last_sample_time is None
-                or now - self.mag_last_sample_time > 0.5):
-            self.mag_sync_samples.clear()
-            self.mag_sync_started = now
-        self.mag_last_sample_time = now
-        if self.mag_sync_started is None:
-            self.mag_sync_started = now
-        self.mag_sync_samples.append((magnetic_heading - gyro_yaw) % 360.0)
-        if (now - self.mag_sync_started < self.MAG_SYNC_WINDOW_S
-                or len(self.mag_sync_samples) < self.MAG_SYNC_MIN_SAMPLES):
-            return
-
-        candidate, confidence = self._circular_mean(self.mag_sync_samples)
-        accepted = confidence >= self.MAG_SYNC_MIN_CONFIDENCE
-        if accepted and self.heading_offset is not None:
-            error = (candidate - self.heading_offset + 180.0) % 360.0 - 180.0
-            # A long-running gyro can legitimately drift farther than the old
-            # 25-degree gate. Magnetic samples have already passed a coherent
-            # multi-second circular check, so allow a re-anchor while still
-            # rejecting a near-opposite disturbed field.
-            accepted = abs(error) <= 90.0
-        if accepted:
-            if self.heading_offset is None:
-                self.heading_offset = candidate
-            else:
-                error = (candidate - self.heading_offset + 180.0) % 360.0 - 180.0
-                self.heading_offset = (self.heading_offset + error * 0.25) % 360.0
-            self.mag_last_sync_time = now
-        self.mag_sync_samples.clear()
-        self.mag_sync_started = None
-
-    @staticmethod
-    def _circular_mean(values):
-        sx = sum(math.cos(math.radians(value)) for value in values)
-        sy = sum(math.sin(math.radians(value)) for value in values)
-        count = max(1, len(values))
-        confidence = math.hypot(sx, sy) / count
-        return math.degrees(math.atan2(sy, sx)) % 360.0, confidence
-
     def _reset_heading_states(self):
-        self.gyro_ready = False
-        self.heading_offset = None
-        self.mag_sync_samples.clear()
-        self.mag_sync_started = None
-        self.mag_last_sample_time = None
-        self.mag_last_sync_time = None
+        self.heading_ready = False
+        self.heading_absolute = False
 
     def _display_heading(self):
-        offset = self.heading_offset if self.heading_offset is not None else 0.0
-        return (self.gyro_heading + offset) % 360.0
+        return self.camera_heading
 
     def _camera_heading(self):
-        return (self._display_heading() + self.camera_pan_angle) % 360.0
+        return self.camera_heading
 
     def _mag_sync_is_valid(self, now=None):
-        if self.mag_last_sync_time is None:
-            return False
-        now = time.monotonic() if now is None else now
-        return now - self.mag_last_sync_time <= self.MAG_SYNC_VALID_S
+        return self.heading_absolute
 
     def _update_calibration_status(self, status):
         active = status not in ("idle", "complete") and not status.startswith("failed:")
         if active and not self.calibration_active:
             self._reset_heading_states()
-            self.last_inertial_yaw = None
         elif status == "complete" and self.calibration_active:
             self._reset_heading_states()
-            self.last_inertial_yaw = None
         self.calibration_active = active
+        self.update()
 
     def _update_battery(self, voltage, minimum, maximum, percent):
         if not all(math.isfinite(value) for value in (
@@ -278,21 +173,6 @@ class VisionPage(QWidget):
             self.debug_network_delay = bool(enabled)
         self.update()
 
-    def _advance_hud(self):
-        changed = False
-        if self.gyro_ready:
-            delta = (self.gyro_target - self.gyro_heading + 180.0) % 360.0 - 180.0
-            if abs(delta) > 0.08:
-                self.gyro_heading = (self.gyro_heading + delta * 0.08) % 360.0
-                changed = True
-        if self.camera_pan_ready:
-            delta = self.camera_pan_target - self.camera_pan_angle
-            if abs(delta) > 0.03:
-                self.camera_pan_angle += delta * 0.12
-                changed = True
-        if changed:
-            self.update()
-
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -325,7 +205,7 @@ class VisionPage(QWidget):
         painter.drawImage(QRectF(self.rect()), self.frame, source)
 
     def _draw_compass(self, painter):
-        heading = self._camera_heading() if self.gyro_ready else self.camera_pan_angle
+        heading = self._camera_heading() if self.heading_ready else 0.0
         center_x = self.width() / 2
         top = 0
         span = min(760, self.width() * 0.68)
@@ -435,8 +315,8 @@ class VisionPage(QWidget):
         # inertial packet it uses the default/camera-pan heading, then hands
         # over continuously without disappearing during calibration resets.
         heading = (
-            self._camera_heading() if self.gyro_ready
-            else self.camera_pan_angle
+            self._camera_heading() if self.heading_ready
+            else 0.0
         )
         angle = math.radians(heading - 90.0)
         cone_length = size * 0.28
@@ -553,15 +433,12 @@ class VisionPage(QWidget):
         self.receiver.set_active(active)
         self.camera.set_active(active)
         if active:
-            self.hud_timer.start(16)
             self.frame_timer.start(16)
             self.update()
         else:
-            self.hud_timer.stop()
             self.frame_timer.stop()
 
     def stop(self):
-        self.hud_timer.stop()
         self.frame_timer.stop()
         self.receiver.stop()
         self.camera.stop()
