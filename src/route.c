@@ -918,15 +918,9 @@ static esp_err_t api_scan(httpd_req_t *r)
     ESP_LOGI(TAG, "scan: request sta_connected=%d manual=%d running=%d ready=%d", sta_connected, sta_manual_disconnect, scan_running, scan_ready);
     httpd_resp_set_type(r, "application/json; charset=utf-8");
     httpd_resp_set_hdr(r, "Connection", "close");
-    /* A scan temporarily retunes the shared AP/STA radio.  Never start one
-       while clients are attached: it can disconnect the car and Core host. */
-    wifi_sta_list_t clients = {0};
-    esp_wifi_ap_get_sta_list(&clients);
-    if (clients.num > 0)
-    {
-        httpd_resp_sendstr(r, "{\"running\":false,\"networks\":[],\"error\":\"AP_CLIENTS_CONNECTED\"}");
-        return ESP_OK;
-    }
+    /* Scanning from the management page necessarily means at least one
+       SoftAP client is attached. APSTA supports background scans; returning
+       to the home channel between channels keeps vehicle links responsive. */
     if (sta_connected && !sta_manual_disconnect)
     {
         httpd_resp_sendstr(r, "{\"running\":false,\"networks\":[],\"error\":\"DISCONNECT_FIRST\"}");
@@ -945,11 +939,11 @@ static esp_err_t api_scan(httpd_req_t *r)
     }
     wifi_scan_config_t cfg = {0};
     cfg.show_hidden = true;
-    cfg.channel = AP_CHANNEL;
+    cfg.channel = 0;
     cfg.scan_type = WIFI_SCAN_TYPE_ACTIVE;
-    cfg.scan_time.active.min = 60;
-    cfg.scan_time.active.max = 140;
-    cfg.home_chan_dwell_time = 30;
+    cfg.scan_time.active.min = 20;
+    cfg.scan_time.active.max = 45;
+    cfg.home_chan_dwell_time = 120;
     scan_running = true;
     esp_err_t e = esp_wifi_scan_start(&cfg, false);
     if (e != ESP_OK)

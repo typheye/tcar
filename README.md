@@ -18,7 +18,7 @@ ESP32 固件提供 `Typheye Car 0000` SoftAP、DHCP、可选 STA/NAT、设备发
 | --- | --- |
 | `/test` | 简洁设备发现和 Core host 地址 |
 | `/api/state` | 完整路由器、配置和设备状态 |
-| `/api/scan` | WLAN 扫描；有 AP 客户端时拒绝执行 |
+| `/api/scan` | APSTA 后台全信道 WLAN 扫描 |
 | `/api/wifi` | 保存 STA profile |
 
-修改后使用 ESP-IDF 构建；必须在确认串口日志后再刷写。APSTA 模式共享射频，避免在有客户端连接时扫描或频繁切换 STA。
+修改后使用 ESP-IDF 构建；必须在确认串口日志后再刷写。扫描会在信道之间返回 AP 主信道，以降低对车内连接的影响。
