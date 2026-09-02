@@ -11,7 +11,10 @@
     --buttonAltText: #111827;
     --switchOff: #d7dce5;
     --knob: #fff;
-    --overlay: #0008
+    --overlay: #0008;
+    --scrollTrack: #e8ebf0;
+    --scrollThumb: #a7afbc;
+    --scrollThumbHover: #7c8695
 }
 
 :root.dark {
@@ -26,7 +29,10 @@
     --buttonAltText: #f3f4f6;
     --switchOff: #3a404c;
     --knob: #f3f4f6;
-    --overlay: #000b
+    --overlay: #000b;
+    --scrollTrack: #22262f;
+    --scrollThumb: #626a77;
+    --scrollThumbHover: #858e9d
 }
 
 * {
@@ -362,6 +368,49 @@ input {
     box-shadow: 0 22px 70px #0005
 }
 
+.listDialog {
+    height: min(680px, 86vh);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden
+}
+
+.listDialog>.head,
+.listDialog>.actions {
+    flex: 0 0 auto
+}
+
+.modalScroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollThumb) var(--scrollTrack);
+    padding-right: 8px
+}
+
+.modalScroll::-webkit-scrollbar {
+    width: 7px
+}
+
+.modalScroll::-webkit-scrollbar-track {
+    background: var(--scrollTrack);
+    border-radius: 999px
+}
+
+.modalScroll::-webkit-scrollbar-thumb {
+    min-height: 44px;
+    background: var(--scrollThumb);
+    border-radius: 999px;
+    border: 2px solid var(--scrollTrack)
+}
+
+.modalScroll::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollThumbHover)
+}
+
 .smallBox {
     width: min(420px, 100%)
 }
@@ -466,6 +515,10 @@ input {
 
     .box {
         max-height: 82vh
+    }
+
+    .listDialog {
+        height: 82vh
     }
 
     .brand h1 {
