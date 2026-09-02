@@ -9,7 +9,11 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.SocketTimeoutException
 import java.net.URL
 
 sealed interface ConnectionState {
@@ -25,6 +29,8 @@ data class TelemetryState(
     val roll: Float = 0f,
     val yaw: Float = 0f,
     val heading: Float = 0f,
+    val cameraHeading: Float = 0f,
+    val headingAbsolute: Boolean = false,
     val magneticHeading: Float? = null,
     val cameraPan: Float = 0f,
     val distanceMm: Float = 0f,
@@ -35,12 +41,27 @@ data class TelemetryState(
     val lastUpdatedElapsed: Long = 0L,
 )
 
+data class PerformanceState(
+    val available: Boolean = false,
+    val uptimeSeconds: Float = 0f,
+    val cpuPercent: Float = 0f,
+    val memoryPercent: Float = 0f,
+    val latencyMs: Float = 0f,
+    val networkMbPerSecond: Float = 0f,
+    val hostname: String = "Raspberry Pi 4B",
+    val platform: String = "Linux",
+    val python: String = "--",
+)
+
 class ConnectionViewModel : ViewModel() {
     var state: ConnectionState by mutableStateOf(ConnectionState.Disconnected)
         private set
     var telemetry: TelemetryState by mutableStateOf(TelemetryState())
         private set
+    var performance: PerformanceState by mutableStateOf(PerformanceState())
+        private set
     private var telemetryJob: Job? = null
+    private var performanceJob: Job? = null
 
     fun connect(username: String, password: String) {
         if (state is ConnectionState.Discovering) return
@@ -53,6 +74,7 @@ class ConnectionViewModel : ViewModel() {
             }.onSuccess { host ->
                 state = ConnectionState.Connected(host)
                 startTelemetry(host)
+                startPerformance(host)
             }.onFailure { error ->
                 state = ConnectionState.Failed(error.message ?: "Connection failed")
             }
@@ -62,8 +84,70 @@ class ConnectionViewModel : ViewModel() {
     fun disconnect() {
         telemetryJob?.cancel()
         telemetryJob = null
+        performanceJob?.cancel()
+        performanceJob = null
         telemetry = TelemetryState()
+        performance = PerformanceState()
         state = ConnectionState.Disconnected
+    }
+
+    private fun startPerformance(host: String) {
+        performanceJob?.cancel()
+        performanceJob = viewModelScope.launch {
+            var previousBytes: Long? = null
+            var previousTime = 0L
+            while (isActive && (state as? ConnectionState.Connected)?.coreHost == host) {
+                val started = SystemClock.elapsedRealtime()
+                val result = withContext(Dispatchers.IO) { pollPerformance(host) }
+                if (result != null) {
+                    val (json, latency) = result
+                    val now = SystemClock.elapsedRealtime()
+                    val bytes = json.optLong("network_bytes", 0L)
+                    val network = if (previousBytes != null && previousTime > 0L) {
+                        ((bytes - previousBytes).coerceAtLeast(0L) * 1000.0 /
+                            (now - previousTime).coerceAtLeast(1L) / 1_048_576.0).toFloat()
+                    } else {
+                        0f
+                    }
+                    previousBytes = bytes
+                    previousTime = now
+                    performance = PerformanceState(
+                        available = true,
+                        uptimeSeconds = json.optDouble("uptime").toFloat(),
+                        cpuPercent = json.optDouble("cpu").toFloat(),
+                        memoryPercent = json.optDouble("memory").toFloat(),
+                        latencyMs = latency,
+                        networkMbPerSecond = network,
+                        hostname = json.optString("hostname", "Raspberry Pi 4B"),
+                        platform = json.optString("platform", "Linux"),
+                        python = json.optString("python", "--"),
+                    )
+                } else {
+                    performance = performance.copy(available = false)
+                }
+                delay((1_000L - (SystemClock.elapsedRealtime() - started)).coerceAtLeast(100L))
+            }
+        }
+    }
+
+    private fun pollPerformance(host: String): Pair<JSONObject, Float>? {
+        val payload = "performance_status".toByteArray(Charsets.UTF_8)
+        val response = ByteArray(2048)
+        val started = SystemClock.elapsedRealtimeNanos()
+        return try {
+            DatagramSocket().use { socket ->
+                socket.soTimeout = 800
+                socket.send(DatagramPacket(payload, payload.size, InetAddress.getByName(host), 8888))
+                val packet = DatagramPacket(response, response.size)
+                socket.receive(packet)
+                val latency = (SystemClock.elapsedRealtimeNanos() - started) / 1_000_000f
+                JSONObject(String(packet.data, packet.offset, packet.length, Charsets.UTF_8)) to latency
+            }
+        } catch (_: SocketTimeoutException) {
+            null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun startTelemetry(host: String) {
@@ -94,6 +178,8 @@ class ConnectionViewModel : ViewModel() {
         roll = json.optDouble("roll").toFloat(),
         yaw = json.optDouble("yaw").toFloat(),
         heading = json.optDouble("heading").toFloat(),
+        cameraHeading = json.optDouble("camera_heading", json.optDouble("heading")).toFloat(),
+        headingAbsolute = json.optBoolean("heading_absolute", false),
         magneticHeading = json.opt("mag_heading")?.takeUnless { it == JSONObject.NULL }?.let {
             (it as? Number)?.toFloat()
         },

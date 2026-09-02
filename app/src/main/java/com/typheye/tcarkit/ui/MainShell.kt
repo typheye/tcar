@@ -1,5 +1,6 @@
 package com.typheye.tcarkit.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
@@ -22,7 +23,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -32,22 +32,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import com.typheye.tcarkit.PerformanceState
 import com.typheye.tcarkit.TelemetryState
 
 private enum class Page { Drive, Home, Performance, Settings }
 
 @Composable
-internal fun MainShell(coreHost: String, telemetry: TelemetryState, onDisconnect: () -> Unit) {
+internal fun MainShell(
+    coreHost: String,
+    telemetry: TelemetryState,
+    performance: PerformanceState,
+    onDisconnect: () -> Unit,
+) {
     var page by rememberSaveable { mutableStateOf(Page.Drive) }
     var menuOpen by remember { mutableStateOf(false) }
-    var videoFps by remember { mutableFloatStateOf(0f) }
-    var frameDelayMs by remember { mutableFloatStateOf(0f) }
+
+    BackHandler(enabled = menuOpen) { menuOpen = false }
 
     Box(Modifier.fillMaxSize()) {
         when (page) {
-            Page.Drive -> VisionScreen(coreHost, telemetry, { videoFps = it }, { frameDelayMs = it })
+            Page.Drive -> VisionScreen(coreHost, telemetry)
             Page.Home -> HomeScreen(telemetry)
-            Page.Performance -> PerformanceScreen(coreHost, telemetry, videoFps)
+            Page.Performance -> PerformanceScreen(performance)
             Page.Settings -> SettingsScreen(coreHost, onDisconnect)
         }
         Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -55,8 +61,8 @@ internal fun MainShell(coreHost: String, telemetry: TelemetryState, onDisconnect
                 onClick = { menuOpen = true },
                 modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
                 colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = Color(0xB8FFFFFF),
-                    contentColor = Color(0xFF15181D),
+                    containerColor = if (page == Page.Drive) Color(0x8A000000) else Color(0xB8FFFFFF),
+                    contentColor = if (page == Page.Drive) Color.White else Color(0xFF15181D),
                 ),
             ) {
                 Icon(Icons.Default.Menu, "Menu")

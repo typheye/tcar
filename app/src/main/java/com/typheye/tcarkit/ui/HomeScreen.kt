@@ -107,7 +107,7 @@ private fun AircraftAttitudeIndicator(data: TelemetryState, modifier: Modifier) 
         drawCircle(Color(0xFF626870), radius + 8.dp.toPx(), center)
 
         clipPath(horizonPath) {
-            rotate(data.roll, center) {
+            rotate(-data.roll, center) {
                 drawRect(
                     Color(0xFF4B9DCE),
                     topLeft = Offset(center.x - radius * 2f, center.y - radius * 2f),
@@ -119,13 +119,6 @@ private fun AircraftAttitudeIndicator(data: TelemetryState, modifier: Modifier) 
                     topLeft = Offset(center.x - radius * 2f, horizonY),
                     size = androidx.compose.ui.geometry.Size(radius * 4f, radius * 3f),
                 )
-                drawLine(
-                    Color(0xFFE9EEF2),
-                    Offset(center.x - radius * 1.4f, horizonY),
-                    Offset(center.x + radius * 1.4f, horizonY),
-                    2.dp.toPx(),
-                )
-
                 for (mark in -30..30 step 10) {
                     if (mark == 0) continue
                     val y = horizonY - mark * pitchScale
@@ -154,11 +147,14 @@ private fun AircraftAttitudeIndicator(data: TelemetryState, modifier: Modifier) 
         }
 
         val tickColor = Color(0xFFF4F6F8)
-        val tickAngles = intArrayOf(-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60)
+        val tickAngles = intArrayOf(
+            -90, -80, -70, -60, -50, -45, -40, -30, -20, -10,
+            0, 10, 20, 30, 40, 45, 50, 60, 70, 80, 90,
+        )
         tickAngles.forEach { roll ->
             val radians = (-90f + roll) * PI.toFloat() / 180f
             val outer = radius - 7.dp.toPx()
-            val inner = outer - if (roll % 30 == 0) 15.dp.toPx() else 10.dp.toPx()
+            val inner = outer - if (roll % 30 == 0) 15.dp.toPx() else 9.dp.toPx()
             drawLine(
                 tickColor,
                 Offset(center.x + cos(radians) * inner, center.y + sin(radians) * inner),
@@ -167,14 +163,16 @@ private fun AircraftAttitudeIndicator(data: TelemetryState, modifier: Modifier) 
             )
         }
 
-        val markerY = center.y - radius + 26.dp.toPx()
+        val markerY = center.y - radius + 29.dp.toPx()
         val rollMarker = Path().apply {
-            moveTo(center.x, markerY + 13.dp.toPx())
-            lineTo(center.x - 9.dp.toPx(), markerY - 3.dp.toPx())
-            lineTo(center.x + 9.dp.toPx(), markerY - 3.dp.toPx())
+            moveTo(center.x, markerY - 10.dp.toPx())
+            lineTo(center.x - 9.dp.toPx(), markerY + 7.dp.toPx())
+            lineTo(center.x + 9.dp.toPx(), markerY + 7.dp.toPx())
             close()
         }
-        drawPath(rollMarker, Color(0xFFFF6B62))
+        rotate(-data.roll.coerceIn(-90f, 90f), center) {
+            drawPath(rollMarker, Color(0xFFFF6B62))
+        }
 
         val aircraft = Color(0xFFFFD600)
         val wingY = center.y
@@ -191,29 +189,6 @@ private fun AircraftAttitudeIndicator(data: TelemetryState, modifier: Modifier) 
             6.dp.toPx(),
         )
         drawCircle(aircraft, 7.dp.toPx(), center)
-        drawLine(
-            aircraft,
-            Offset(center.x, center.y + 7.dp.toPx()),
-            Offset(center.x, center.y + radius * .30f),
-            5.dp.toPx(),
-        )
-        drawArc(
-            aircraft,
-            startAngle = 0f,
-            sweepAngle = 180f,
-            useCenter = false,
-            topLeft = Offset(center.x - radius * .12f, center.y - radius * .06f),
-            size = androidx.compose.ui.geometry.Size(radius * .24f, radius * .22f),
-            style = Stroke(5.dp.toPx()),
-        )
-        val tail = Path().apply {
-            moveTo(center.x - radius * .13f, center.y + radius * .45f)
-            lineTo(center.x + radius * .13f, center.y + radius * .45f)
-            lineTo(center.x + radius * .22f, center.y + radius * .67f)
-            lineTo(center.x - radius * .22f, center.y + radius * .67f)
-            close()
-        }
-        drawPath(tail, aircraft)
 
         drawCircle(Color(0xFFB7BCC2), radius + 1.dp.toPx(), center, style = Stroke(5.dp.toPx()))
         drawCircle(Color(0xFF2B2F35), radius + 10.dp.toPx(), center, style = Stroke(6.dp.toPx()))

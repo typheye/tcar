@@ -23,13 +23,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -58,8 +56,6 @@ import kotlin.math.sin
 internal fun VisionScreen(
     coreHost: String,
     telemetry: TelemetryState,
-    onFps: (Float) -> Unit,
-    onFrameDelay: (Float) -> Unit,
 ) {
     var videoConnected by remember { mutableStateOf(false) }
     var videoFps by remember { mutableFloatStateOf(0f) }
@@ -68,14 +64,14 @@ internal fun VisionScreen(
         AndroidView(
             factory = { context ->
                 MjpegVideoView(context).also {
-                    it.onFpsChanged = { fps -> videoFps = fps; onFps(fps) }
-                    it.onFrameDelayChanged = { delay -> frameDelayMs = delay; onFrameDelay(delay) }
+                    it.onFpsChanged = { fps -> videoFps = fps }
+                    it.onFrameDelayChanged = { delay -> frameDelayMs = delay }
                     it.onConnectionChanged = { connected -> videoConnected = connected }
                 }
             },
             update = {
-                it.onFpsChanged = { fps -> videoFps = fps; onFps(fps) }
-                it.onFrameDelayChanged = { delay -> frameDelayMs = delay; onFrameDelay(delay) }
+                it.onFpsChanged = { fps -> videoFps = fps }
+                it.onFrameDelayChanged = { delay -> frameDelayMs = delay }
                 it.onConnectionChanged = { connected -> videoConnected = connected }
                 it.connect("http://$coreHost:8080/stream.mjpg")
             },
@@ -104,7 +100,7 @@ internal fun VisionScreen(
 
 @Composable
 private fun CompassRibbon(data: TelemetryState, modifier: Modifier = Modifier) {
-    val heading = smoothAngle(normalize(data.heading + data.cameraPan))
+    val heading = normalize(data.cameraHeading)
     val density = LocalDensity.current
     Canvas(modifier.fillMaxWidth().height(56.dp)) {
         val center = size.width / 2f
@@ -127,7 +123,7 @@ private fun CompassRibbon(data: TelemetryState, modifier: Modifier = Modifier) {
             )
             drawLine(Color(0xAFCDD0D2), Offset(x, startY), Offset(x, endY), 1.dp.toPx())
             if (major && abs(offset) >= 7f) {
-                val label = if (data.magneticHeading != null) {
+                val label = if (data.headingAbsolute) {
                     cardinalAt(normalized.toFloat()) ?: normalized.toString()
                 } else {
                     normalized.toString()
@@ -164,23 +160,6 @@ private fun CompassRibbon(data: TelemetryState, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun smoothAngle(target: Float): Float {
-    var value by remember { mutableFloatStateOf(target) }
-    LaunchedEffect(target) {
-        while (true) {
-            val delta = (target - value + 540f) % 360f - 180f
-            if (abs(delta) <= .08f) {
-                value = target
-                break
-            }
-            value = normalize(value + delta * .08f)
-            withFrameNanos { }
-        }
-    }
-    return value
-}
-
-@Composable
 private fun DebugPanel(fps: Float, frameDelayMs: Float, modifier: Modifier = Modifier) {
     Surface(
         modifier.widthIn(min = 240.dp, max = 330.dp).fillMaxWidth(.25f),
@@ -210,7 +189,7 @@ private fun DebugRow(label: String, value: String) {
 
 @Composable
 private fun MiniMap(data: TelemetryState, mapSize: Dp, modifier: Modifier = Modifier) {
-    val heading = smoothAngle(normalize(data.heading + data.cameraPan))
+    val heading = normalize(data.cameraHeading)
     Canvas(modifier.size(mapSize)) {
         drawRect(Color(0xB95C6065))
         drawRect(Color(0xB9EBEBEB), style = Stroke(2.dp.toPx()))
@@ -232,7 +211,7 @@ private fun MiniMap(data: TelemetryState, mapSize: Dp, modifier: Modifier = Modi
             close()
         }
         val end = Offset(center.x + cos(angle) * length, center.y + sin(angle) * length)
-        val colors = if (data.magneticHeading != null) {
+        val colors = if (data.headingAbsolute) {
             listOf(Color(0xD7BEFFD2), Color(0x10A0F5BE))
         } else {
             listOf(Color(0xCDFFFFFF), Color(0x12FFFFFF))
