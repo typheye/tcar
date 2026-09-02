@@ -2,12 +2,15 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <application android:theme="@style/Theme.TCarKit" android:label="tCarKit"
+        android:appCategory="game"
         android:usesCleartextTraffic="true" android:networkSecurityConfig="@xml/network_security_config"
         android:icon="@drawable/icon_logo" android:roundIcon="@drawable/icon_round">
         <activity android:name=".MainActivity" android:screenOrientation="sensorLandscape"
             android:windowSoftInputMode="adjustResize" android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" />
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.GAME" />
             </intent-filter>
         </activity>
     </application>
