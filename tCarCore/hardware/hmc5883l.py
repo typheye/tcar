@@ -4,6 +4,7 @@
 import json
 import math
 import os
+import threading
 import time
 from collections import deque
 
@@ -26,6 +27,11 @@ class HMC5883L:
     # Installed board reports physical East as North before mounting
     # compensation. Rotate once here; consumers must not remap it again.
     HEADING_OFFSET_DEG = 90.0
+    HEADING_SYNC_WINDOW_S = 1.5
+    HEADING_RESYNC_INTERVAL_S = 15.0
+    HEADING_SYNC_VALID_S = 45.0
+    HEADING_SYNC_MIN_SAMPLES = 12
+    HEADING_SYNC_MIN_CONFIDENCE = 0.90
 
     def __init__(self, bus=shared_i2c, calibration_path=None):
         self.bus = bus
@@ -39,6 +45,13 @@ class HMC5883L:
         self.calibrated = False
         self.samples = deque(maxlen=61)
         self.last_heading = None
+        self._heading_lock = threading.RLock()
+        self._heading_offset = None
+        self._heading_sync_samples = deque(maxlen=256)
+        self._heading_sync_started = None
+        self._heading_last_sample_time = None
+        self._heading_last_sync_time = None
+        self._heading_last_inertial = None
         self._load()
 
     def start(self):
@@ -95,6 +108,96 @@ class HMC5883L:
         delta = deltas[len(deltas) // 2]
         self.last_heading = (center + delta * 0.12) % 360.0
         return self.last_heading
+
+    def resolve_heading(self, inertial_heading, magnetic_heading, camera_pan=0.0,
+                        now=None):
+        """Return the one authoritative vehicle/camera compass solution.
+
+        The magnetometer establishes an absolute offset periodically. The MPU
+        then carries smooth turns between accepted magnetic synchronization
+        windows. Consumers must render these values without remapping them.
+        """
+        now = time.monotonic() if now is None else float(now)
+        inertial = float(inertial_heading) % 360.0
+        pan = max(-90.0, min(90.0, float(camera_pan)))
+        with self._heading_lock:
+            if self._heading_last_inertial is not None:
+                step = wrap_angle(inertial - self._heading_last_inertial)
+                if abs(step) > 35.0:
+                    self._reset_heading_estimator_locked()
+            self._heading_last_inertial = inertial
+
+            if magnetic_heading is not None and math.isfinite(magnetic_heading):
+                self._sample_heading_sync(
+                    inertial, float(magnetic_heading) % 360.0, now
+                )
+
+            offset = self._heading_offset or 0.0
+            vehicle = (inertial + offset) % 360.0
+            absolute = (
+                self._heading_last_sync_time is not None
+                and now - self._heading_last_sync_time <= self.HEADING_SYNC_VALID_S
+            )
+            return {
+                "heading": vehicle,
+                "camera_heading": (vehicle + pan) % 360.0,
+                "heading_absolute": absolute,
+                "heading_source": "magnetic_sync" if absolute else "inertial",
+            }
+
+    def reset_heading_estimator(self):
+        with self._heading_lock:
+            self._reset_heading_estimator_locked()
+
+    def _sample_heading_sync(self, inertial, magnetic, now):
+        needs_sync = (
+            self._heading_offset is None
+            or self._heading_last_sync_time is None
+            or now - self._heading_last_sync_time >= self.HEADING_RESYNC_INTERVAL_S
+        )
+        if not needs_sync:
+            return
+        if (self._heading_last_sample_time is None
+                or now - self._heading_last_sample_time > 0.5):
+            self._heading_sync_samples.clear()
+            self._heading_sync_started = now
+        self._heading_last_sample_time = now
+        if self._heading_sync_started is None:
+            self._heading_sync_started = now
+        self._heading_sync_samples.append((magnetic - inertial) % 360.0)
+        if (now - self._heading_sync_started < self.HEADING_SYNC_WINDOW_S
+                or len(self._heading_sync_samples) < self.HEADING_SYNC_MIN_SAMPLES):
+            return
+
+        candidate, confidence = self._circular_mean(self._heading_sync_samples)
+        accepted = confidence >= self.HEADING_SYNC_MIN_CONFIDENCE
+        if accepted and self._heading_offset is not None:
+            error = wrap_angle(candidate - self._heading_offset)
+            accepted = abs(error) <= 90.0
+        if accepted:
+            if self._heading_offset is None:
+                self._heading_offset = candidate
+            else:
+                error = wrap_angle(candidate - self._heading_offset)
+                self._heading_offset = (self._heading_offset + error * 0.25) % 360.0
+            self._heading_last_sync_time = now
+        self._heading_sync_samples.clear()
+        self._heading_sync_started = None
+
+    @staticmethod
+    def _circular_mean(values):
+        sx = sum(math.cos(math.radians(value)) for value in values)
+        sy = sum(math.sin(math.radians(value)) for value in values)
+        count = max(1, len(values))
+        return math.degrees(math.atan2(sy, sx)) % 360.0, math.hypot(sx, sy) / count
+
+    def _reset_heading_estimator_locked(self):
+        self._heading_offset = None
+        self._heading_sync_samples.clear()
+        self._heading_sync_started = None
+        self._heading_last_sample_time = None
+        self._heading_last_sync_time = None
+        self._heading_last_inertial = None
 
     def calibrate(self, seconds=30.0, yaw_rate_reader=None, progress=None,
                   cancelled=None):

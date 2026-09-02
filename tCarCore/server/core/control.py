@@ -178,7 +178,9 @@ class ControlService:
         self.status = "gyro"
         self.buzzer.pattern([(1, .08), (0, .08), (1, .08), (0, .08), (1, .08)])
         self.sonar.set_suspended(True)
-        try: self.mpu.recalibrate()
+        try:
+            self.mpu.recalibrate()
+            self.magnetometer.reset_heading_estimator()
         finally:
             self.sonar.set_suspended(False)
             self.sonar.reset_lights()
@@ -210,6 +212,7 @@ class ControlService:
             if heading is None:
                 raise RuntimeError("magnetometer heading validation failed")
             self.magnetometer.commit_calibration()
+            self.magnetometer.reset_heading_estimator()
             self.log.info("magnetometer heading ready %.1f deg", heading)
             succeeded = True
         finally:
