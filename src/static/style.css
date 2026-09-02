@@ -369,7 +369,6 @@ input {
 }
 
 .listDialog {
-    height: min(680px, 86vh);
     display: flex;
     flex-direction: column;
     overflow: hidden
@@ -515,10 +514,6 @@ input {
 
     .box {
         max-height: 82vh
-    }
-
-    .listDialog {
-        height: 82vh
     }
 
     .brand h1 {
