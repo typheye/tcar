@@ -16,6 +16,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -24,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.typheye.tcarkit.ConnectionState
 import com.typheye.tcarkit.ConnectionViewModel
+import com.typheye.tcarkit.SettingsStore
 
 val TCarDark = darkColorScheme(
     background = Color(0xFF0B0D10),
@@ -37,7 +39,9 @@ val TCarDark = darkColorScheme(
 fun TCarKitApp(connection: ConnectionViewModel) {
     var showSplash by rememberSaveable { mutableStateOf(true) }
     var confirmExit by rememberSaveable { mutableStateOf(false) }
-    val activity = LocalContext.current as? Activity
+    val context = LocalContext.current
+    val settings = remember(context) { SettingsStore(context) }
+    val activity = context as? Activity
     val lowBatteryLocked = connection.state is ConnectionState.Connected &&
         connection.telemetry.available && connection.telemetry.batteryPercent < 10f
 
@@ -53,6 +57,8 @@ fun TCarKitApp(connection: ConnectionViewModel) {
                     state.coreHost,
                     connection.telemetry,
                     connection.performance,
+                    settings.showDebugConsole,
+                    settings::updateShowDebugConsole,
                     connection::disconnect,
                 )
                 else -> ConnectionScreen(state, connection::connect)

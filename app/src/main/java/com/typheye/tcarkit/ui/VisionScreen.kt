@@ -56,6 +56,7 @@ import kotlin.math.sin
 internal fun VisionScreen(
     coreHost: String,
     telemetry: TelemetryState,
+    showDebugConsole: Boolean,
 ) {
     var videoConnected by remember { mutableStateOf(false) }
     var videoFps by remember { mutableFloatStateOf(0f) }
@@ -80,7 +81,9 @@ internal fun VisionScreen(
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             if (telemetry.available) {
                 CompassRibbon(telemetry, Modifier.align(Alignment.TopCenter))
-                DebugPanel(videoFps, frameDelayMs, Modifier.align(Alignment.CenterStart))
+                if (showDebugConsole) {
+                    DebugPanel(videoFps, frameDelayMs, Modifier.align(Alignment.CenterStart))
+                }
                 val mapSize = (maxWidth * .17f).coerceIn(150.dp, 230.dp)
                 MiniMap(telemetry, mapSize, Modifier.align(Alignment.BottomEnd).padding(22.dp))
                 BatteryBar(

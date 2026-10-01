@@ -42,6 +42,8 @@ internal fun MainShell(
     coreHost: String,
     telemetry: TelemetryState,
     performance: PerformanceState,
+    showDebugConsole: Boolean,
+    onShowDebugConsoleChange: (Boolean) -> Unit,
     onDisconnect: () -> Unit,
 ) {
     var page by rememberSaveable { mutableStateOf(Page.Drive) }
@@ -51,10 +53,10 @@ internal fun MainShell(
 
     Box(Modifier.fillMaxSize()) {
         when (page) {
-            Page.Drive -> VisionScreen(coreHost, telemetry)
+            Page.Drive -> VisionScreen(coreHost, telemetry, showDebugConsole)
             Page.Home -> HomeScreen(telemetry)
             Page.Performance -> PerformanceScreen(performance)
-            Page.Settings -> SettingsScreen(coreHost, onDisconnect)
+            Page.Settings -> SettingsScreen(coreHost, showDebugConsole, onShowDebugConsoleChange, onDisconnect)
         }
         Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             FilledTonalIconButton(
