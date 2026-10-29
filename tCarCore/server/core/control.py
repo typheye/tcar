@@ -60,6 +60,16 @@ class ControlService:
                 muted = self.buzzer.toggle_mute()
                 self.log.info("buzzer %s", "muted" if muted else "unmuted")
                 return
+            if select and self._edge(previous_buttons, buttons, "mode"):
+                enabled = not self.mpu.snapshot().get(
+                    "trajectory_enabled", False
+                )
+                self.mpu.set_trajectory_enabled(enabled)
+                self.buzzer.switch_feedback(enabled, force=False)
+                self.log.info(
+                    "trajectory space %s", "enabled" if enabled else "disabled"
+                )
+                return
             self._button_feedback(previous_buttons, buttons, select)
             hat = tuple(state.get("hat", (0, 0)))
             if hat != (0, 0) and self._last_hat == (0, 0):

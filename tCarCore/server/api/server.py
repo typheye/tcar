@@ -124,11 +124,12 @@ class APIServer:
                 if data != b"get_data": continue
                 item = self.telemetry.snapshot(); q = item["quaternion"]; a = item["accel"]; g = item["gyro"]
                 mag = item["mag_heading"] if item["mag_heading"] is not None else float("nan")
-                packet = struct.pack("!24f", item["pitch"], item["roll"], item["yaw"], *q, *a, *g,
+                packet = struct.pack("!25f", item["pitch"], item["roll"], item["yaw"], *q, *a, *g,
                                      item["distance_mm"], mag, item["heading"], item["camera_pan"],
                                      float(item["infrared_mask"]), *item["position_mm"],
                                      float(item["trajectory_epoch"]), item["camera_heading"],
-                                     1.0 if item["heading_absolute"] else 0.0)
+                                     1.0 if item["heading_absolute"] else 0.0,
+                                     1.0 if item["trajectory_enabled"] else 0.0)
                 sock.sendto(packet, address)
         finally: sock.close()
 

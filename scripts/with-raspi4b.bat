@@ -48,13 +48,12 @@ if !errorlevel! neq 0 (
   echo [ERROR] Upload failed!
   exit /b 1
 )
-ssh pi@%IP% "rm -f ~/tCarCore/Utils/dmp_firmware.bin"
 echo [2/2] Restarting tCarCore service...
-ssh pi@%IP% "sudo systemctl stop tcar-core.service"
-ping 127.0.0.1 -n 3 >nul
-ssh pi@%IP% "sudo pkill -f 'python.*init.py' || true"
-ping 127.0.0.1 -n 2 >nul
-ssh pi@%IP% "sudo systemctl start tcar-core.service"
+ssh pi@%IP% "rm -f ~/tCarCore/Utils/dmp_firmware.bin && sudo systemctl restart tcar-core.service && systemctl is-active --quiet tcar-core.service"
+if !errorlevel! neq 0 (
+  echo [ERROR] Service restart failed!
+  exit /b 1
+)
 echo [SUCCESS] Service restarted.
 exit /b 0
 

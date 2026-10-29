@@ -44,11 +44,11 @@ class Buzzer:
                 if after: after()
         threading.Thread(target=run, name="buzzer-pattern", daemon=True).start()
         return True
-    def switch_feedback(self, enabled):
-        """Emit the common switch sound, bypassing mute state."""
+    def switch_feedback(self, enabled, force=True):
+        """Emit the common switch sound; callers may honor the mute state."""
         pattern = ([(1, .10)] if enabled
                    else [(1, .05), (0, .10), (1, .05)])
-        return self.pattern(pattern, force=True)
+        return self.pattern(pattern, force=force)
     def toggle_mute(self):
         with self.lock:
             enabling = not self._muted

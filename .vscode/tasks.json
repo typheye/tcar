@@ -6,12 +6,19 @@
             "type": "shell",
             "icon": {
                 "id": "play",
-                "tooltip": "上传姿态/磁航向修复并重启远程服务"
+                "tooltip": "上传 tCarCore 并重启远程服务"
             },
-            "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
+            "command": "bash",
             "args": [
+                "${workspaceFolder}/scripts/with-raspi4b.sh",
                 "--reset"
             ],
+            "windows": {
+                "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
+                "args": [
+                    "--reset"
+                ]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -26,11 +33,17 @@
                 "id": "trash",
                 "tooltip": "清理项目缓存"
             },
-            "command": "cmd",
+            "command": "bash",
             "args": [
-                "/c",
-                "for /r . %i in (__pycache__) do @if exist \"%i\" rd /s /q \"%i\" && for /r . %j in (*.pyc) do @del /q \"%j\""
+                "${workspaceFolder}/scripts/clean.sh"
             ],
+            "windows": {
+                "command": "cmd",
+                "args": [
+                    "/c",
+                    "for /r . %i in (__pycache__) do @if exist \"%i\" rd /s /q \"%i\" && for /r . %j in (*.pyc) do @del /q \"%j\""
+                ]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -43,12 +56,19 @@
             "type": "shell",
             "icon": {
                 "id": "output",
-                "tooltip": "查看 turbopi.service 实时日志"
+                "tooltip": "查看 tcar-core.service 实时日志"
             },
-            "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
+            "command": "bash",
             "args": [
+                "${workspaceFolder}/scripts/with-raspi4b.sh",
                 "--log"
             ],
+            "windows": {
+                "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
+                "args": [
+                    "--log"
+                ]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -64,10 +84,17 @@
                 "id": "terminal",
                 "tooltip": "打开 SSH 连接到树莓派"
             },
-            "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
+            "command": "bash",
             "args": [
+                "${workspaceFolder}/scripts/with-raspi4b.sh",
                 "--ssh"
             ],
+            "windows": {
+                "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
+                "args": [
+                    "--ssh"
+                ]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -82,10 +109,17 @@
                 "id": "refresh",
                 "tooltip": "重启树莓派"
             },
-            "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
+            "command": "bash",
             "args": [
+                "${workspaceFolder}/scripts/with-raspi4b.sh",
                 "--reboot"
             ],
+            "windows": {
+                "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
+                "args": [
+                    "--reboot"
+                ]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -100,10 +134,17 @@
                 "id": "trash",
                 "tooltip": "删除树莓派 ~/tCarCore 目录"
             },
-            "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
+            "command": "bash",
             "args": [
+                "${workspaceFolder}/scripts/with-raspi4b.sh",
                 "--format"
             ],
+            "windows": {
+                "command": "${workspaceFolder}\\scripts\\with-raspi4b.bat",
+                "args": [
+                    "--format"
+                ]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
