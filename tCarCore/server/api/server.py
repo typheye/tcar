@@ -10,6 +10,7 @@ import struct
 import threading
 import time
 import os
+import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
@@ -18,9 +19,12 @@ from server.core.logd_manager import get_logger
 
 
 class APIServer:
-    def __init__(self, telemetry, video, control, username="tcar", password="admin123"):
+    def __init__(self, telemetry, video, control, username="tcar", password="admin123", setup=None):
         self.telemetry, self.video, self.control = telemetry, video, control
         self.username, self.password = username, password
+        self.setup = setup
+        self._tokens = {}
+        self._token_lock = threading.Lock()
         self.log = get_logger("API")
         self.running = False; self.http = None; self.threads = []
         self.paused = False
@@ -42,6 +46,31 @@ class APIServer:
         if self.http: self.http.shutdown(); self.http.server_close()
         for thread in self.threads: thread.join(timeout=1.0)
 
+    def _authenticate(self, username, password):
+        if self.setup:
+            return self.setup.config.authenticate(username, password)
+        return hmac.compare_digest(username.encode(), self.username.encode()) and hmac.compare_digest(password.encode(), self.password.encode())
+
+    def _account_key(self):
+        return self.setup.config.snapshot()["account"] if self.setup else (self.username, self.password)
+
+    def _issue_token(self, account_key=None):
+        token = secrets.token_urlsafe(32)
+        with self._token_lock:
+            now = time.monotonic()
+            self._tokens = {k: v for k, v in self._tokens.items() if v[0] > now}
+            if len(self._tokens) >= 64:
+                self._tokens.pop(next(iter(self._tokens)))
+            self._tokens[token] = (now + 3600, self._account_key() if account_key is None else account_key)
+        return token
+
+    def _authorized(self, header):
+        if header.startswith("Bearer "):
+            with self._token_lock:
+                record = self._tokens.get(header[7:])
+            return bool(record and record[0] > time.monotonic() and record[1] == self._account_key())
+        return False
+
     def _handler(self):
         owner = self
         class Handler(BaseHTTPRequestHandler):
@@ -50,18 +79,56 @@ class APIServer:
             def _json(self, status, value):
                 payload = json.dumps(value, separators=(",", ":")).encode()
                 self.send_response(status); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(payload))); self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(payload)
+            def _body(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 16384:
+                    self.close_connection = True
+                    raise ValueError("invalid request size")
+                value = json.loads(self.rfile.read(length))
+                if not isinstance(value, dict): raise ValueError("expected JSON object")
+                return value
+            def _setup_authorized(self):
+                if owner.setup is None:
+                    self._json(503, {"error": "device setup unavailable"}); return False
+                if not owner._authorized(self.headers.get("Authorization", "")):
+                    self.close_connection = True
+                    self._json(401, {"error": "authentication expired; reconnect"}); return False
+                return True
             def do_POST(self):
+                if self.path.startswith("/api/v1/setup/"):
+                    if not self._setup_authorized(): return
+                    try:
+                        request = self._body()
+                        actions = {
+                            "/api/v1/setup/config": lambda: owner.setup.save(request),
+                            "/api/v1/setup/begin": owner.setup.begin,
+                            "/api/v1/setup/preview": lambda: owner.setup.preview(request),
+                            "/api/v1/setup/end": lambda: owner.setup.end(request.get("session")),
+                        }
+                        action = actions.get(self.path)
+                        if action is None:
+                            self._json(404, {"error": "unknown setup operation"}); return
+                        self._json(200, action())
+                    except (ValueError, KeyError, TypeError) as error:
+                        self._json(400, {"error": str(error)})
+                    except RuntimeError as error:
+                        self._json(409, {"error": str(error)})
+                    except OSError:
+                        self._json(503, {"error": "device I/O or configuration write failed"})
+                    return
                 if self.path != "/api/login": self.send_error(404); return
                 try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    if not 0 < length <= 4096: raise ValueError("invalid request size")
-                    request = json.loads(self.rfile.read(length))
+                    request = self._body()
                     username, password = str(request.get("username", "")), str(request.get("password", ""))
                 except (ValueError, TypeError, json.JSONDecodeError): self._json(400, {"status": 0, "error": "invalid_request"}); return
-                if not (hmac.compare_digest(username, owner.username) and hmac.compare_digest(password, owner.password)):
+                account_key = owner._account_key()
+                if not owner._authenticate(username, password) or account_key != owner._account_key():
                     self._json(401, {"status": 0, "error": "invalid_credentials"}); return
-                self._json(200, {"status": 1})
+                self._json(200, {"status": 1, "token": owner._issue_token(account_key)})
             def do_GET(self):
+                if self.path == "/api/v1/setup/config":
+                    if self._setup_authorized(): self._json(200, owner.setup.config.public())
+                    return
                 if owner.paused:
                     self.send_error(503, "Desktop services paused"); return
                 if self.path == "/api/v1/telemetry":
@@ -121,6 +188,12 @@ class APIServer:
                     sock.sendto(b"ok", address); continue
                 if data == b"trajectory_reset":
                     self.control.mpu.reset_trajectory(); sock.sendto(b"ok", address); continue
+                if data == b"sensor_sample":
+                    sock.sendto(
+                        json.dumps(
+                            self.telemetry.sensor_sample(), separators=(",", ":")
+                        ).encode(), address,
+                    ); continue
                 if data != b"get_data": continue
                 item = self.telemetry.snapshot(); q = item["quaternion"]; a = item["accel"]; g = item["gyro"]
                 mag = item["mag_heading"] if item["mag_heading"] is not None else float("nan")

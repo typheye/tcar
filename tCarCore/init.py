@@ -26,6 +26,8 @@ from server.core.control import ControlService
 from server.core.lifecycle import Lifecycle
 from server.core.logd_manager import INFO, get_logger, install_print_capture, set_level
 from server.core.telemetry import Telemetry
+from server.core.device_config import DeviceConfig
+from server.core.device_setup import DeviceSetup
 from server.rpc.server import RPCServer
 
 
@@ -59,9 +61,12 @@ def main():
     telemetry = lifecycle.add(
         "telemetry", Telemetry(mpu, magnetometer, sonar, battery, servos, infrared)
     )
+    control.session_reset = telemetry.reset_session
+    config = DeviceConfig(servos)
+    setup = lifecycle.add("device setup", DeviceSetup(config, control, battery))
     controller = lifecycle.add("PS controller", PSController(control.handle_input))
-    lifecycle.add("internal RPC", RPCServer(telemetry, motors, servos, sonar, control))
-    api = lifecycle.add("external API", APIServer(telemetry, video, control))
+    lifecycle.add("internal RPC", RPCServer(telemetry, motors, servos, sonar, control, config))
+    api = lifecycle.add("external API", APIServer(telemetry, video, control, setup=setup))
     control.desktop_toggle = api.toggle_paused
     try:
         lifecycle.start()

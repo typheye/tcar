@@ -25,6 +25,32 @@ class BatteryMonitor:
         self.valid_samples = 0
         self.running = False
         self.thread = None
+        self.lock = threading.RLock()
+        self.full_runtime_minutes = 129.5
+
+    def apply_config(self, config):
+        with self.lock:
+            voltage_range_changed = (
+                self.MINIMUM_VOLTAGE != float(config["empty_voltage"])
+                or self.MAXIMUM_VOLTAGE != float(config["full_voltage"])
+            )
+            self.MINIMUM_VOLTAGE = float(config["empty_voltage"])
+            self.MAXIMUM_VOLTAGE = float(config["full_voltage"])
+            self.full_runtime_minutes = float(config["full_runtime_minutes"])
+            if self.voltage > 0 and voltage_range_changed:
+                self._percent = self._voltage_percent()
+
+    def _voltage_percent(self):
+        return max(0.0, min(100.0, (self.voltage - self.MINIMUM_VOLTAGE)
+                           / (self.MAXIMUM_VOLTAGE - self.MINIMUM_VOLTAGE) * 100.0))
+
+    def snapshot(self):
+        with self.lock:
+            return {"voltage": self.voltage, "percent": self._percent,
+                    "minimum_voltage": self.MINIMUM_VOLTAGE,
+                    "maximum_voltage": self.MAXIMUM_VOLTAGE,
+                    "full_runtime_minutes": self.full_runtime_minutes,
+                    "remaining_minutes": self.full_runtime_minutes * self._percent / 100.0}
 
     def start(self):
         self.running = True
@@ -53,6 +79,10 @@ class BatteryMonitor:
         return self.MAXIMUM_VOLTAGE
 
     def _accept(self, value):
+        with self.lock:
+            self._accept_locked(value)
+
+    def _accept_locked(self, value):
         if not self.RAW_MINIMUM_VOLTAGE <= value <= self.RAW_MAXIMUM_VOLTAGE:
             return
         self.samples.append(value)
@@ -66,11 +96,7 @@ class BatteryMonitor:
             target = self.voltage + (median - self.voltage) * 0.12
             change = max(-0.015, min(0.015, target - self.voltage))
             self.voltage += change
-        target_percent = max(0.0, min(
-            100.0,
-            (self.voltage - self.MINIMUM_VOLTAGE)
-            / (self.MAXIMUM_VOLTAGE - self.MINIMUM_VOLTAGE) * 100.0,
-        ))
+        target_percent = self._voltage_percent()
         if self.valid_samples == 1:
             self._percent = target_percent
         else:

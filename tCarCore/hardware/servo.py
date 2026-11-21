@@ -46,6 +46,7 @@ class ServoController:
         self.resetting = False
         self.reset_generation = 0
         self.reset_thread = None
+        self.calibrating = False
         self.initialized = True
 
     def start(self):
@@ -57,19 +58,62 @@ class ServoController:
         self.running = False
         if self.thread: self.thread.join(timeout=1.0)
 
-    def set_pulse(self, servo_id, pulse, duration_ms=100):
+    def set_pulse(self, servo_id, pulse, duration_ms=100, _calibration=False):
         if servo_id not in range(1, 7): raise ValueError("servo id must be 1..6")
-        low, high = self.limits.get(servo_id, (500, 2500))
-        pulse = max(low, min(high, int(pulse)))
-        duration_ms = max(0, min(30000, int(duration_ms)))
-        payload = [self.COMMAND, 1, duration_ms & 0xFF, duration_ms >> 8,
-                   servo_id, pulse & 0xFF, pulse >> 8]
         with self.lock:
+            if self.calibrating and not _calibration:
+                raise RuntimeError("gimbal is reserved for OOBE calibration")
+            low, high = (500, 2500) if _calibration else self.limits.get(servo_id, (500, 2500))
+            pulse = max(low, min(high, int(pulse)))
+            duration_ms = max(0, min(30000, int(duration_ms)))
+            payload = [self.COMMAND, 1, duration_ms & 0xFF, duration_ms >> 8,
+                       servo_id, pulse & 0xFF, pulse >> 8]
             self.bus.write(self.ADDRESS, payload)
             self.positions[servo_id] = pulse
         return pulse
 
-    def get_pulse(self, servo_id): return self.positions.get(int(servo_id))
+    def apply_config(self, config):
+        with self.lock:
+            self.factory = {i: config[str(i)]["default_us"] for i in (1, 2)}
+            self.limits = {i: (config[str(i)]["min_us"], config[str(i)]["max_us"]) for i in (1, 2)}
+
+    def begin_calibration(self):
+        with self.lock:
+            if self.resetting or (self.reset_thread and self.reset_thread.is_alive()):
+                raise RuntimeError("gimbal is returning to default; retry shortly")
+            if self.calibrating:
+                raise RuntimeError("gimbal calibration already active")
+            self.stop_motion()
+            self.calibrating = True
+
+    def calibration_pulse(self, servo_id, pulse):
+        with self.lock:
+            if not self.calibrating:
+                raise RuntimeError("no gimbal calibration session")
+            return self.set_pulse(servo_id, pulse, 100, _calibration=True)
+
+    def end_calibration(self):
+        with self.lock:
+            self.stop_motion()
+            errors = []
+            try:
+                # Restore persisted limits, including an unsaved preview beyond
+                # them. Cancel any in-flight preview at the last commanded pulse.
+                for i in (1, 2):
+                    low, high = self.limits[i]
+                    target = max(low, min(high, self.positions[i]))
+                    duration = max(100, int(abs(target - self.positions[i]) / 0.4))
+                    try:
+                        self.set_pulse(i, target, duration, _calibration=True)
+                    except (OSError, RuntimeError) as error:
+                        errors.append(error)
+            finally:
+                self.calibrating = False
+            if errors:
+                raise errors[0]
+
+    def get_pulse(self, servo_id):
+        with self.lock: return self.positions.get(int(servo_id))
     def is_resetting(self):
         with self.lock: return self.resetting
 
@@ -87,6 +131,8 @@ class ServoController:
             )
             target = pulse_step if speed > 0.0 else -pulse_step
         with self.lock:
+            if self.calibrating:
+                raise RuntimeError("gimbal is reserved for OOBE calibration")
             self.target_speed[servo_id] = target
 
     def stop_motion(self):
@@ -96,6 +142,8 @@ class ServoController:
 
     def reset(self, wait=False):
         with self.lock:
+            if self.calibrating:
+                raise RuntimeError("gimbal is reserved for OOBE calibration")
             self.reset_generation += 1
             requested_generation = self.reset_generation
 
@@ -146,22 +194,19 @@ class ServoController:
             with self.lock:
                 resetting = self.resetting
                 targets = dict(self.target_speed)
-            if not resetting:
-                for servo_id in (1, 2):
-                    current = self.current_speed[servo_id]
-                    target = targets[servo_id]
-                    current += (target - current) * self.SMOOTHING
-                    if abs(current) < 0.5: current = 0.0
-                    self.current_speed[servo_id] = current
-                    if abs(current) > 0.5:
-                        step = int(current)
-                        self.set_pulse(
-                            servo_id,
-                            self.get_pulse(servo_id) + step,
-                            30,
-                        )
+                if not resetting and not self.calibrating:
+                    for servo_id in (1, 2):
+                        current = self.current_speed[servo_id]
+                        target = targets[servo_id]
+                        current += (target - current) * self.SMOOTHING
+                        if abs(current) < 0.5: current = 0.0
+                        self.current_speed[servo_id] = current
+                        if abs(current) > 0.5:
+                            step = int(current)
+                            self.set_pulse(servo_id, self.get_pulse(servo_id) + step, 30)
             time.sleep(max(0.0, 0.02 - (time.monotonic() - started)))
 
     def horizontal_angle(self):
-        center = self.factory[2]
-        return (center - self.positions[2]) * 180.0 / 2000.0
+        with self.lock:
+            center = self.factory[2]
+            return (center - self.positions[2]) * 180.0 / 2000.0

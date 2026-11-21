@@ -22,6 +22,7 @@ class ControlService:
         self._right_servo_active = {1: False, 2: False}
         self._desktop_combo_active = False
         self._translation_heading = None
+        self.session_reset = None
 
     def start(self): self.motors.brake()
     def stop(self): self.motors.brake()
@@ -166,8 +167,8 @@ class ControlService:
 
     def _background(self, name, function):
         if self.worker and self.worker.is_alive(): return
-        self.busy = True; self.status = "starting:" + name.replace(" ", "_")
-        self.operation_cancel.clear(); self.motors.brake()
+        if not self.begin_exclusive_operation(name):
+            return
         def run():
             try:
                 self.log.info("starting %s", name); function(); self.status = "complete"
@@ -185,6 +186,8 @@ class ControlService:
         self.worker = threading.Thread(target=run, name=name.replace(" ", "-"), daemon=True); self.worker.start()
 
     def _calibrate_inertial(self):
+        if self.session_reset:
+            self.session_reset()
         self.status = "gyro"
         self.buzzer.pattern([(1, .08), (0, .08), (1, .08), (0, .08), (1, .08)])
         self.sonar.set_suspended(True)

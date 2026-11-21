@@ -12,9 +12,10 @@ from server.core.logd_manager import get_logger
 
 
 class RPCServer:
-    def __init__(self, telemetry, motors, servos, sonar, control=None):
+    def __init__(self, telemetry, motors, servos, sonar, control=None, config=None):
         self.telemetry, self.motors, self.servos, self.sonar = telemetry, motors, servos, sonar
         self.control = control
+        self.config = config
         self.log = get_logger("RPC"); self.http = None; self.thread = None
     def start(self):
         self.http = ThreadingHTTPServer(("0.0.0.0", 9030), self._handler())
@@ -23,6 +24,17 @@ class RPCServer:
         if self.http: self.http.shutdown(); self.http.server_close()
         if self.thread: self.thread.join(timeout=1.0)
     def _call(self, method, params):
+        if self.control and method in ("SetPWMServo", "SetServoVelocity", "ResetPWMServo", "SetBrushMotor"):
+            with self.control.lock:
+                if self.control.busy:
+                    raise RuntimeError("vehicle is reserved for an exclusive operation")
+                return self._dispatch(method, params)
+        return self._dispatch(method, params)
+
+    def _dispatch(self, method, params):
+        if method == "GetDeviceConfig":
+            if self.config is None: raise RuntimeError("device configuration unavailable")
+            return [True, self.config.public(), "GetDeviceConfig"]
         if method == "Heartbeat": return [True, (), "Heartbeat"]
         if method == "LoadFunc": return [True, (), "LoadFunc"]
         if method == "GetBatteryVoltage": return [True, self.telemetry.snapshot()["battery_voltage"] * 1000.0, "GetBatteryVoltage"]
@@ -33,6 +45,9 @@ class RPCServer:
                 "minimum_voltage": item["battery_min_voltage"],
                 "maximum_voltage": item["battery_max_voltage"],
                 "percent": item["battery_percent"],
+                "full_runtime_minutes": item["battery_full_runtime_minutes"],
+                "remaining_minutes": item["battery_remaining_minutes"],
+                "config_revision": self.config.public()["revision"] if self.config else 0,
             }, "GetBatteryStatus"]
         if method == "GetSonarDistance": return [True, self.telemetry.snapshot()["distance_mm"], "GetSonarDistance"]
         if method == "SetPWMServo":
@@ -55,6 +70,8 @@ class RPCServer:
             self.motors.authorize(); self.motors.set_all(commands)
             return [True, (), "SetBrushMotor"]
         if method == "EmergencyStop":
+            if self.control:
+                self.control.operation_cancel.set()
             self.motors.brake(force=True); return [True, (), "EmergencyStop"]
         if method == "GetSystemInfo":
             return [True, self._system_info(), "GetSystemInfo"]

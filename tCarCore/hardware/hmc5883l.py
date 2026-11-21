@@ -27,6 +27,9 @@ class HMC5883L:
     # Installed board reports physical East as North before mounting
     # compensation. Rotate once here; consumers must not remap it again.
     HEADING_OFFSET_DEG = 90.0
+    # CONFIG_B gain 7 selects the +-8.1 Ga range at 230 LSB/Gauss. One Gauss
+    # is 100 uT, so a calibrated count equals 100/230 uT.
+    UT_PER_COUNT = 100.0 / 230.0
     HEADING_SYNC_WINDOW_S = 1.5
     HEADING_RESYNC_INTERVAL_S = 15.0
     HEADING_SYNC_VALID_S = 45.0
@@ -45,6 +48,7 @@ class HMC5883L:
         self.calibrated = False
         self.samples = deque(maxlen=61)
         self.last_heading = None
+        self._read_lock = threading.RLock()
         self._heading_lock = threading.RLock()
         self._heading_offset = None
         self._heading_sync_samples = deque(maxlen=256)
@@ -84,23 +88,49 @@ class HMC5883L:
         return [self._i16_be(data, 0), self._i16_be(data, 4), self._i16_be(data, 2)]
 
     def read_calibrated(self):
-        raw = self.read_raw()
+        return self._field_from_raw(self.read_raw())
+
+    def sample(self):
+        """Read one complete magnetometer record in calibrated units."""
+        with self._read_lock:
+            raw = self.read_raw()
+            values = self._field_from_raw(raw)
+            strength = None
+            heading = None
+            if values is not None:
+                horizontal = math.hypot(values[0], values[1])
+                strength = math.sqrt(sum(value * value for value in values))
+                if (self.calibrated
+                        and self.field_radius * 0.55 <= horizontal
+                        <= self.field_radius * 1.8):
+                    heading = self._smooth_heading(values[0], values[1])
+            field = (
+                [value * self.UT_PER_COUNT for value in values]
+                if values is not None else None
+            )
+            return {
+                "raw": list(raw),
+                "field_counts": values,
+                "field_ut": field,
+                "strength_ut": (
+                    None if strength is None
+                    else strength * self.UT_PER_COUNT
+                ),
+                "heading": heading,
+            }
+
+    def heading(self):
+        if not self.calibrated:
+            return None
+        return self.sample()["heading"]
+
+    def _field_from_raw(self, raw):
         if any(abs(value) >= 4090 for value in raw):
             return None
         mapped = [raw[self.AXIS_MAP[i]] * self.AXIS_SIGN[i] for i in range(3)]
         return [(mapped[i] - self.offset[i]) * self.scale[i] for i in range(3)]
 
-    def heading(self):
-        if not self.calibrated:
-            return None
-        values = self.read_calibrated()
-        if values is None:
-            return None
-        x, y, _ = values
-        strength = math.hypot(x, y)
-        if not (self.field_radius * 0.55 <= strength <= self.field_radius * 1.8):
-            return None
-        # This is the only N/S mounting compensation in the whole stack.
+    def _smooth_heading(self, x, y):
         heading = self._heading_from_xy(x, y)
         self.samples.append(heading)
         center = heading if self.last_heading is None else self.last_heading

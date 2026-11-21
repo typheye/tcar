@@ -4,6 +4,8 @@ After=local-fs.target
 [Service]
 Type=simple
 User=root
+StateDirectory=tcar-core
+StateDirectoryMode=0700
 WorkingDirectory=/home/pi/tCarCore
 ExecStart=/home/pi/miniforge3/envs/tcar-core_env/bin/python /home/pi/tCarCore/init.py
 Restart=on-failure
