@@ -18,13 +18,29 @@ Zero2W 负责 Car Device 侧摄像头、状态转发和 GUI 辅助功能，不�
 
 | 路径 | 内容 |
 | --- | --- |
-| `Car/init.py` | 副机启动入口 |
-| `Car/server/` | HTTP、摄像头和中枢通信 |
-| `Car/gui/` | 设备界面与状态面板 |
-| `Car/toolbox/` | `tcar.service`、有线速度服务和 setup |
+| `tCar/init.py` | 副机启动入口 |
+| `tCar/server/` | HTTP、摄像头和中枢通信 |
+| `tCar/server/gui/` | 设备界面与状态面板 |
+| `tCar/toolbox/` | `tcar.service`、有线速度服务和 setup |
 | `docs/` | 安装、接口和排障文档 |
 
 ## 安装
+
+Linux 部署和调试脚本与 4B 使用相同的参数，自动从路由器
+`http://192.168.66.1/test` 查找 `Car device` 的当前地址：
+
+```bash
+bash scripts/with-raspiz2w.sh --reset    # 上传 tCar 并重启 tcar.service
+bash scripts/with-raspiz2w.sh --ssh      # SSH 终端
+bash scripts/with-raspiz2w.sh --log      # 实时日志
+bash scripts/with-raspiz2w.sh --reboot   # 重启 Zero 2 W
+bash scripts/clean.sh                   # 清理本地 tCar 的 Python 缓存
+```
+
+`--format` 会删除 Zero 2 W 上的 `/home/pi/tCar`；`--help` 可离线查看用法。
+上传会排除 Python 缓存，重启后检查 `tcar.service` 是否处于 active 状态。
+VS Code 的运行、清理、日志、SSH、重启和格式化任务已按平台区分：Linux 使用
+Bash，Windows 保留 `scripts/with-raspiz2w.bat`。
 
 ```bash
 sudo sh /home/pi/tCar/toolbox/setup.sh

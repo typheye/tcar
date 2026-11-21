@@ -8,10 +8,15 @@
                 "id": "play",
                 "tooltip": "上传并重启远程服务"
             },
-            "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+            "command": "bash",
             "args": [
+                "${workspaceFolder}/scripts/with-raspiz2w.sh",
                 "--reset"
             ],
+            "windows": {
+                "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+                "args": ["--reset"]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -26,11 +31,17 @@
                 "id": "trash",
                 "tooltip": "清理项目缓存"
             },
-            "command": "cmd",
+            "command": "bash",
             "args": [
-                "/c",
-                "for /r . %i in (__pycache__) do @if exist \"%i\" rd /s /q \"%i\" && for /r . %j in (*.pyc) do @del /q \"%j\""
+                "${workspaceFolder}/scripts/clean.sh"
             ],
+            "windows": {
+                "command": "cmd",
+                "args": [
+                    "/c",
+                    "for /r . %i in (__pycache__) do @if exist \"%i\" rd /s /q \"%i\" && for /r . %j in (*.pyc) do @del /q \"%j\""
+                ]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -43,12 +54,17 @@
             "type": "shell",
             "icon": {
                 "id": "output",
-                "tooltip": "查看 gui-app.service 实时日志"
+                "tooltip": "查看 tcar.service 实时日志"
             },
-            "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+            "command": "bash",
             "args": [
+                "${workspaceFolder}/scripts/with-raspiz2w.sh",
                 "--log"
             ],
+            "windows": {
+                "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+                "args": ["--log"]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -64,10 +80,15 @@
                 "id": "terminal",
                 "tooltip": "打开 SSH 连接到树莓派"
             },
-            "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+            "command": "bash",
             "args": [
+                "${workspaceFolder}/scripts/with-raspiz2w.sh",
                 "--ssh"
             ],
+            "windows": {
+                "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+                "args": ["--ssh"]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -82,10 +103,15 @@
                 "id": "refresh",
                 "tooltip": "重启树莓派"
             },
-            "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+            "command": "bash",
             "args": [
+                "${workspaceFolder}/scripts/with-raspiz2w.sh",
                 "--reboot"
             ],
+            "windows": {
+                "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+                "args": ["--reboot"]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",
@@ -100,10 +126,15 @@
                 "id": "trash",
                 "tooltip": "删除树莓派 ~/tCar 目录"
             },
-            "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+            "command": "bash",
             "args": [
+                "${workspaceFolder}/scripts/with-raspiz2w.sh",
                 "--format"
             ],
+            "windows": {
+                "command": "${workspaceFolder}\\scripts\\with-raspiz2w.bat",
+                "args": ["--format"]
+            },
             "group": "build",
             "presentation": {
                 "reveal": "always",

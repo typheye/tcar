@@ -27,6 +27,7 @@ class CarRPC:
             "GetRunningFunc": {"type": "positional", "params": []},
             "GetBatteryVoltage": {"type": "positional", "params": []},
             "GetBatteryStatus": {"type": "positional", "params": []},
+            "GetDeviceConfig": {"type": "positional", "params": []},
             "GetSonarDistance": {"type": "positional", "params": []},
             "GetSystemInfo": {"type": "positional", "params": []},
             "HardwareSelfTest": {"type": "positional", "params": []},

@@ -24,6 +24,8 @@ class NetworkStatus:
         self.core_battery_info_status = False
         self.core_battery_info_voltage = -1
         self.core_battery_info_battery = -1
+        self.core_battery_remaining_minutes = None
+        self.core_config_revision = None
         self._battery_lock = threading.Lock()
         self.local_cable_status = False
         self.router_core_status = False
@@ -111,11 +113,13 @@ class NetworkStatus:
         return self.camera_status
 
     def get_core_battery(self):
-        status, voltage, battery = (
-            self.core_battery_info_status,
-            self.core_battery_info_voltage,
-            self.core_battery_info_battery,
-        )
+        with self._battery_lock:
+            status, voltage, battery, remaining_minutes = (
+                self.core_battery_info_status,
+                self.core_battery_info_voltage,
+                self.core_battery_info_battery,
+                self.core_battery_remaining_minutes,
+            )
         if status and voltage > 0:
             # 根据电量选择颜色
             if battery > 30:
@@ -124,15 +128,11 @@ class NetworkStatus:
                 color = COLOR_YELLOW
             else:
                 color = COLOR_RED
-            remaining_wh = (
-                BATTERY_NOMINAL_VOLTAGE
-                * BATTERY_CAPACITY_AH
-                * max(0.0, min(100.0, battery)) / 100.0
-            )
-            runtime_hours = (
-                remaining_wh / CAR_REFERENCE_POWER_W
-                if CAR_REFERENCE_POWER_W > 0 else 0.0
-            )
+            # New Core owns runtime estimates; constants remain a fallback
+            # only for older Core firmware without the additional RPC fields.
+            runtime_hours = (remaining_minutes / 60.0 if remaining_minutes is not None
+                             else BATTERY_NOMINAL_VOLTAGE * BATTERY_CAPACITY_AH
+                             * max(0.0, min(100.0, battery)) / 100.0 / CAR_REFERENCE_POWER_W)
             return (f"{runtime_hours:.1f} h", int(battery), color)
         else:
             return ("0.0 h", 0, COLOR_MID_BLUE)
@@ -176,6 +176,8 @@ class NetworkStatus:
             status = self.core_battery_info_status
             voltage = self.core_battery_info_voltage
             battery = self.core_battery_info_battery
+            remaining_minutes = self.core_battery_remaining_minutes
+            revision = self.core_config_revision
 
         # 检查主机在线状态
         if self.local_cable_status or self.router_core_status or self.core_status:
@@ -187,6 +189,10 @@ class NetworkStatus:
                     voltage = float(payload["voltage"])
                     battery = max(0.0, min(100.0, float(payload["percent"])))
                     status = voltage > 5.0
+                    remaining_minutes = payload.get("remaining_minutes")
+                    if remaining_minutes is not None:
+                        remaining_minutes = max(0.0, float(remaining_minutes))
+                    revision = payload.get("config_revision")
 
             except Exception as e:
                 # Keep the last valid 4B sample through an isolated RPC
@@ -197,6 +203,8 @@ class NetworkStatus:
             status = False
             voltage = -1
             battery = -1
+            remaining_minutes = None
+            revision = None
 
         with self._battery_lock:
             (
@@ -204,6 +212,8 @@ class NetworkStatus:
                 self.core_battery_info_voltage,
                 self.core_battery_info_battery,
             ) = (status, voltage, battery)
+            self.core_battery_remaining_minutes = remaining_minutes
+            self.core_config_revision = revision
 
     def is_low_battery_lockout(self):
         """Apply (wired carrier OR ESP online) AND 4B battery below 10%."""

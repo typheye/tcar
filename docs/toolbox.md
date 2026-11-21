@@ -1,6 +1,6 @@
 # Toolbox 安装
 
-将 `Car` 目录部署到 `/home/pi/tCar` 后执行：
+将 `tCar` 目录部署到 `/home/pi/tCar` 后执行：
 
 ```bash
 sudo sh /home/pi/tCar/toolbox/setup.sh
