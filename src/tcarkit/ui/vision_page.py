@@ -1,0 +1,451 @@
+#!/usr/bin/env python3
+"""First-person camera view with a compact game-style telemetry HUD."""
+
+import math
+import time
+from collections import deque
+
+from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer
+from PyQt5.QtGui import (
+    QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPen,
+)
+from PyQt5.QtWidgets import QWidget
+
+from tcarkit.depends.tcar_view import CameraReceiver, UDPReceiver
+
+
+class VisionPage(QWidget):
+    def __init__(self, ip, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(640, 360)
+        self.frame = QImage()
+        self.connected = False
+        self.camera_heading = 0.0
+        self.heading_ready = False
+        self.heading_absolute = False
+        self.calibration_active = False
+        self.battery_voltage = 0.0
+        self.battery_percent = 0.0
+        self.battery_min_voltage = 6.4
+        self.battery_max_voltage = 8.4
+        self.hud_ticks = 0
+        self.camera_sequence = 0
+        self.frame_times = deque(maxlen=45)
+        self.camera_fps = 0.0
+        self.frame_delay_ms = 0.0
+        self.network_delay_ms = 0.0
+        self.debug_visible = False
+        self.debug_fps = True
+        self.debug_frame_delay = True
+        self.debug_network_delay = False
+        self.trajectory_enabled = False
+        self._reported_trajectory_enabled = False
+        self.trajectory_position_mm = (0.0, 0.0, 0.0)
+        self.trajectory_epoch = None
+
+        self.receiver = UDPReceiver(ip=ip)
+        self.receiver.data_received.connect(self._update_telemetry)
+        self.receiver.battery_status.connect(self._update_battery)
+        self.receiver.network_delay.connect(self._update_network_delay)
+        self.receiver.calibration_status.connect(self._update_calibration_status)
+        self.receiver.start()
+
+        self.camera = CameraReceiver(
+            url=f"http://{ip}:8080/?action=stream",
+            max_fps=30,
+            latest_only=True,
+        )
+        self.camera.connection_status.connect(self._set_connected)
+        self.camera.start()
+
+        # Pull rather than queue frames. If painting ever slows down, the
+        # camera thread overwrites its previous result and the GUI catches up
+        # immediately on the next tick.
+        self.frame_timer = QTimer(self)
+        self.frame_timer.setInterval(16)
+        self.frame_timer.timeout.connect(self._take_latest_frame)
+        self.frame_timer.start()
+
+    def _take_latest_frame(self):
+        result = self.camera.take_latest_frame(self.camera_sequence)
+        if result is None:
+            return
+        self.camera_sequence, image, self.frame_delay_ms = result
+        self.frame = image
+        now = time.monotonic()
+        self.frame_times.append(now)
+        if len(self.frame_times) >= 2:
+            elapsed = self.frame_times[-1] - self.frame_times[0]
+            if elapsed > 0:
+                self.camera_fps = (len(self.frame_times) - 1) / elapsed
+        self.update()
+
+    def _set_connected(self, connected):
+        self.connected = connected
+        self.update()
+
+    def _update_telemetry(self, data):
+        if len(data) < 3:
+            return
+        # The 4B publishes the final camera heading. This client only renders
+        # it and never applies magnetic, axis, mounting or servo corrections.
+        if len(data) < 24:
+            return
+        camera_heading = data[22]
+        heading_absolute = data[23]
+        if not math.isfinite(camera_heading):
+            return
+        self.camera_heading = camera_heading % 360.0
+        self.heading_absolute = heading_absolute >= 0.5
+        self.heading_ready = True
+        if len(data) >= 21:
+            position = (float(data[18]), 0.0, float(data[20]))
+            if all(math.isfinite(value) for value in position):
+                self.trajectory_position_mm = position
+        if len(data) >= 22:
+            epoch = int(round(data[21]))
+            if self.trajectory_epoch is None:
+                self.trajectory_epoch = epoch
+            elif epoch != self.trajectory_epoch:
+                self.trajectory_epoch = epoch
+                self.trajectory_position_mm = (0.0, 0.0, 0.0)
+        if len(data) >= 25:
+            reported = data[24] >= 0.5
+            if reported != self._reported_trajectory_enabled:
+                self._reported_trajectory_enabled = reported
+                self.set_trajectory_enabled(reported)
+        self.update()
+
+    def set_trajectory_enabled(self, enabled):
+        self.trajectory_enabled = bool(enabled)
+        # Enable changes define a new home at the current origin.
+        self.trajectory_position_mm = (0.0, 0.0, 0.0)
+        self.update()
+
+    def _reset_heading_states(self):
+        self.heading_ready = False
+        self.heading_absolute = False
+
+    def _display_heading(self):
+        return self.camera_heading
+
+    def _camera_heading(self):
+        return self.camera_heading
+
+    def _mag_sync_is_valid(self, now=None):
+        return self.heading_absolute
+
+    def _update_calibration_status(self, status):
+        active = status not in ("idle", "complete") and not status.startswith("failed:")
+        if active and not self.calibration_active:
+            self._reset_heading_states()
+        elif status == "complete" and self.calibration_active:
+            self._reset_heading_states()
+        self.calibration_active = active
+        self.update()
+
+    def _update_battery(self, voltage, minimum, maximum, percent):
+        if not all(math.isfinite(value) for value in (
+            voltage, minimum, maximum, percent
+        )):
+            return
+        if not (0.0 <= voltage <= 20.0 and 0.0 <= percent <= 100.0):
+            return
+        # 4B is the sole battery authority. Do not derive or smooth the
+        # percentage again on the desktop.
+        self.battery_voltage = float(voltage)
+        self.battery_min_voltage = float(minimum)
+        self.battery_max_voltage = float(maximum)
+        self.battery_percent = float(percent)
+        self.update()
+
+    def _update_network_delay(self, delay_ms):
+        if math.isfinite(delay_ms) and 0.0 <= delay_ms < 10000.0:
+            if self.network_delay_ms == 0.0:
+                self.network_delay_ms = delay_ms
+            else:
+                self.network_delay_ms += (delay_ms - self.network_delay_ms) * 0.2
+
+    def set_debug_visible(self, enabled):
+        self.debug_visible = bool(enabled)
+        self.update()
+
+    def set_debug_metric(self, metric, enabled):
+        if metric == "fps":
+            self.debug_fps = bool(enabled)
+        elif metric == "frame_delay":
+            self.debug_frame_delay = bool(enabled)
+        elif metric == "network_delay":
+            self.debug_network_delay = bool(enabled)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        self._draw_camera(painter)
+        self._draw_compass(painter)
+        self._draw_battery(painter)
+        self._draw_map(painter)
+        self._draw_debug(painter)
+        painter.end()
+
+    def _draw_camera(self, painter):
+        painter.fillRect(self.rect(), Qt.black)
+        if self.frame.isNull():
+            painter.setPen(QColor(220, 220, 220))
+            painter.setFont(QFont("Segoe UI", 16))
+            painter.drawText(self.rect(), Qt.AlignCenter, "Camera offline")
+            return
+        source_ratio = self.frame.width() / max(1, self.frame.height())
+        target_ratio = self.width() / max(1, self.height())
+        source = QRectF(0, 0, self.frame.width(), self.frame.height())
+        if source_ratio > target_ratio:
+            width = self.frame.height() * target_ratio
+            source.setLeft((self.frame.width() - width) / 2)
+            source.setWidth(width)
+        else:
+            height = self.frame.width() / target_ratio
+            source.setTop((self.frame.height() - height) / 2)
+            source.setHeight(height)
+        painter.drawImage(QRectF(self.rect()), self.frame, source)
+
+    def _draw_compass(self, painter):
+        heading = self._camera_heading() if self.heading_ready else 0.0
+        center_x = self.width() / 2
+        top = 0
+        span = min(760, self.width() * 0.68)
+        pixels_per_degree = span / 180.0
+        magnetic_labels = self._mag_sync_is_valid()
+        for bearing, offset in self._compass_bearings(heading):
+            x = center_x + offset * pixels_per_degree
+            normalized = int(bearing) % 360
+            major = normalized % 15 == 0
+            cardinal = (
+                self._cardinal(normalized)
+                if magnetic_labels else None
+            )
+            tick_start = top + 18
+            tick_end = top + (29 if major else 23)
+            # Soft one-pixel shadow keeps white HUD text readable without a
+            # gray strip obscuring the first-person view.
+            painter.setPen(QPen(QColor(0, 0, 0, 115), 3))
+            painter.drawLine(QPointF(x + 1, tick_start), QPointF(x + 1, tick_end))
+            painter.setPen(QPen(QColor(205, 208, 210, 175), 1.0))
+            painter.drawLine(QPointF(x, tick_start), QPointF(x, tick_end))
+            # Leave a clear focus lane below the fixed yellow marker. The
+            # peripheral world ticks continue sliding behind it smoothly.
+            if major and abs(offset) >= 7.0:
+                label = cardinal or str(normalized)
+                text_rect = QRectF(x - 28, top + 31, 56, 22)
+                painter.setFont(QFont("Segoe UI", 10, QFont.DemiBold))
+                painter.setPen(QPen(QColor(0, 0, 0, 115), 3))
+                painter.drawText(
+                    text_rect.translated(1, 1), Qt.AlignHCenter | Qt.AlignTop, label
+                )
+                painter.setPen(QColor(205, 208, 210, 175))
+                painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop, label)
+
+        # The focus readout is exact rather than snapped to the nearest tick.
+        focus_label = str(int(round(heading)) % 360)
+        focus_rect = QRectF(center_x - 32, top + 31, 64, 23)
+        painter.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
+        painter.setPen(QPen(QColor(0, 0, 0, 125), 3))
+        painter.drawLine(QPointF(center_x + 1, top + 18), QPointF(center_x + 1, top + 30))
+        painter.drawText(
+            focus_rect.translated(1, 1), Qt.AlignHCenter | Qt.AlignTop, focus_label
+        )
+        painter.setPen(QPen(QColor(255, 255, 255, 255), 2.2))
+        painter.drawLine(QPointF(center_x, top + 17), QPointF(center_x, top + 30))
+        painter.drawText(focus_rect, Qt.AlignHCenter | Qt.AlignTop, focus_label)
+        # Downward equilateral marker sits above the scale and never covers a
+        # heading label.
+        marker = QPainterPath(QPointF(center_x - 7, top + 1))
+        marker.lineTo(QPointF(center_x + 7, top + 1))
+        marker.lineTo(QPointF(center_x, top + 13))
+        marker.closeSubpath()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(238, 205, 72, 255))
+        painter.drawPath(marker)
+
+    @staticmethod
+    def _cardinal(angle):
+        names = {0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW"}
+        return names.get(int(angle) % 360)
+
+    @staticmethod
+    def _compass_bearings(heading, half_range=90, step=5):
+        """Return fixed world ticks and their continuous offsets from center."""
+        start = math.floor((heading - half_range) / step) * step
+        end = heading + half_range
+        bearings = []
+        bearing = start
+        while bearing <= end:
+            bearings.append((bearing, bearing - heading))
+            bearing += step
+        return bearings
+
+    def _draw_battery(self, painter):
+        width = min(500, self.width() * 0.48)
+        height = 26
+        x = (self.width() - width) / 2
+        y = self.height() - height - 22
+        outer = QRectF(x, y, width, height)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 145))
+        painter.drawRect(outer)
+        fill = QRectF(outer)
+        fill.setWidth(fill.width() * self.battery_percent / 100.0)
+        painter.setBrush(QColor(248, 248, 248, 245))
+        painter.drawRect(fill)
+
+    def _draw_map(self, painter):
+        size = min(230, max(150, self.width() * 0.17))
+        margin = 22
+        rect = QRectF(self.width() - size - margin, self.height() - size - margin, size, size)
+        painter.setPen(QPen(QColor(235, 235, 235, 185), 2))
+        painter.setBrush(QColor(92, 96, 101, 185))
+        painter.drawRect(rect)
+        painter.setPen(QPen(QColor(215, 215, 215, 55), 1))
+        for index in range(1, 4):
+            px = rect.left() + rect.width() * index / 4
+            py = rect.top() + rect.height() * index / 4
+            painter.drawLine(QPointF(px, rect.top()), QPointF(px, rect.bottom()))
+            painter.drawLine(QPointF(rect.left(), py), QPointF(rect.right(), py))
+        center = rect.center()
+        radius = max(8.0, size * 0.045)
+        painter.setPen(QPen(QColor(255, 255, 255, 225), 2))
+        painter.setBrush(QColor(205, 205, 205, 230))
+        painter.drawEllipse(center, radius, radius)
+        # The FOV cone is a permanent HUD element. Before the first valid
+        # inertial packet it uses the default/camera-pan heading, then hands
+        # over continuously without disappearing during calibration resets.
+        heading = (
+            self._camera_heading() if self.heading_ready
+            else 0.0
+        )
+        angle = math.radians(heading - 90.0)
+        cone_length = size * 0.28
+        half_fov = math.radians(24.0)
+        left = QPointF(
+            center.x() + math.cos(angle - half_fov) * cone_length,
+            center.y() + math.sin(angle - half_fov) * cone_length,
+        )
+        right = QPointF(
+            center.x() + math.cos(angle + half_fov) * cone_length,
+            center.y() + math.sin(angle + half_fov) * cone_length,
+        )
+        cone = QPainterPath(center)
+        cone.lineTo(left)
+        cone.quadTo(
+            QPointF(center.x() + math.cos(angle) * cone_length * 1.06,
+                    center.y() + math.sin(angle) * cone_length * 1.06),
+            right,
+        )
+        cone.closeSubpath()
+        gradient = QLinearGradient(
+            center,
+            QPointF(center.x() + math.cos(angle) * cone_length,
+                    center.y() + math.sin(angle) * cone_length),
+        )
+        if self._mag_sync_is_valid():
+            gradient.setColorAt(0.0, QColor(190, 255, 210, 215))
+            gradient.setColorAt(1.0, QColor(160, 245, 190, 16))
+        else:
+            gradient.setColorAt(0.0, QColor(255, 255, 255, 205))
+            gradient.setColorAt(1.0, QColor(255, 255, 255, 18))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(gradient)
+        painter.drawPath(cone)
+        painter.setPen(QPen(QColor(255, 255, 255, 225), 2))
+        painter.setBrush(QColor(205, 205, 205, 230))
+        painter.drawEllipse(center, radius, radius)
+        self._draw_home_marker(painter, rect, center)
+
+    def _draw_home_marker(self, painter, rect, center):
+        if not self.trajectory_enabled:
+            return
+        x_mm, _y_mm, z_mm = self.trajectory_position_mm
+        home_x, home_z = -x_mm, -z_mm
+        distance = math.hypot(home_x, home_z)
+        if distance < 1.0:
+            return
+        # Map top is world north (-Z). One map radius represents the Home
+        # grid's 1000 mm half-extent; farther homes remain visible at the edge.
+        usable = rect.width() * 0.5 - 14.0
+        map_scale = usable / 1000.0
+        screen_x = home_x * map_scale
+        screen_y = home_z * map_scale
+        length = math.hypot(screen_x, screen_y)
+        if length > usable:
+            screen_x *= usable / length
+            screen_y *= usable / length
+        point = QPointF(center.x() + screen_x, center.y() + screen_y)
+        marker = QPainterPath()
+        marker.moveTo(point.x(), point.y() - 7.0)
+        marker.lineTo(point.x() + 7.0, point.y())
+        marker.lineTo(point.x(), point.y() + 7.0)
+        marker.lineTo(point.x() - 7.0, point.y())
+        marker.closeSubpath()
+        painter.setPen(QPen(QColor(255, 255, 255, 235), 1.5))
+        painter.setBrush(QColor(80, 205, 255, 235))
+        painter.drawPath(marker)
+
+    def _draw_debug(self, painter):
+        if not self.debug_visible:
+            return
+        lines = []
+        if self.debug_fps:
+            lines.append(("FPS", f"{self.camera_fps:.1f}"))
+        if self.debug_frame_delay:
+            lines.append(("Frame Delay", f"{self.frame_delay_ms:.1f} ms"))
+        if self.debug_network_delay:
+            lines.append(("Network Delay", f"{self.network_delay_ms:.1f} ms"))
+        if not lines:
+            return
+
+        panel_width = min(330.0, max(240.0, self.width() * 0.25))
+        line_height = 25.0
+        panel_height = 30.0 + len(lines) * line_height
+        # Extend the rounded left corners outside the viewport so the visible
+        # panel edge is exactly flush with the left side.
+        x = -6.0
+        y = (self.height() - panel_height) / 2.0
+        rect = QRectF(x, y, panel_width + 6.0, panel_height)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 155))
+        painter.drawRoundedRect(rect, 5, 5)
+        painter.setPen(QColor(255, 255, 255, 245))
+        painter.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
+        label_width = rect.width() * 0.56
+        for index, (label, value) in enumerate(lines):
+            row_top = rect.top() + 14 + index * line_height
+            painter.drawText(
+                QRectF(18, row_top, label_width - 18, line_height),
+                Qt.AlignLeft | Qt.AlignVCenter,
+                label,
+            )
+            painter.drawText(
+                QRectF(label_width, row_top,
+                       rect.right() - label_width - 18, line_height),
+                Qt.AlignRight | Qt.AlignVCenter,
+                value,
+            )
+
+    def set_theme(self, dark):
+        self.update()
+
+    def set_active(self, active):
+        self.receiver.set_active(active)
+        self.camera.set_active(active)
+        if active:
+            self.frame_timer.start(16)
+            self.update()
+        else:
+            self.frame_timer.stop()
+
+    def stop(self):
+        self.frame_timer.stop()
+        self.receiver.stop()
+        self.camera.stop()
+        return self.receiver, self.camera

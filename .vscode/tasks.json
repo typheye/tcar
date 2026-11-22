@@ -1,0 +1,177 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Setup",
+      "icon": {
+        "id": "gear",
+        "tooltip": "创建或更新 tcar 编译环境"
+      },
+      "detail": "Create/update tcar Conda environment",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/pc.sh",
+        "setup"
+      ],
+      "windows": {
+        "command": "${workspaceFolder}\\scripts\\pc.cmd",
+        "args": [
+          "setup"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Play",
+      "icon": {
+        "id": "play",
+        "tooltip": "运行 tCarKit"
+      },
+      "detail": "Run shared sources",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/pc.sh",
+        "run"
+      ],
+      "windows": {
+        "command": "${workspaceFolder}\\scripts\\pc.cmd",
+        "args": [
+          "run"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build",
+      "icon": {
+        "id": "tools",
+        "tooltip": "构建当前平台的 tCarKit"
+      },
+      "detail": "Build the native executable",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/pc.sh",
+        "build"
+      ],
+      "windows": {
+        "command": "${workspaceFolder}\\scripts\\pc.cmd",
+        "args": [
+          "build"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Install",
+      "icon": {
+        "id": "rocket",
+        "tooltip": "安装 tCarKit 并更新启动项"
+      },
+      "detail": "Install executable and application launcher",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/pc.sh",
+        "install"
+      ],
+      "windows": {
+        "command": "${workspaceFolder}\\scripts\\pc.cmd",
+        "args": [
+          "install"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Clean",
+      "icon": {
+        "id": "trash",
+        "tooltip": "清理构建缓存，保留发布产物和已安装程序"
+      },
+      "detail": "Clean build cache; preserve dist and installed executable",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/pc.sh",
+        "clean"
+      ],
+      "windows": {
+        "command": "${workspaceFolder}\\scripts\\pc.cmd",
+        "args": [
+          "clean"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Test",
+      "icon": {
+        "id": "beaker",
+        "tooltip": "运行回归检查"
+      },
+      "detail": "Run regression checks",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/scripts/pc.sh",
+        "test"
+      ],
+      "windows": {
+        "command": "${workspaceFolder}\\scripts\\pc.cmd",
+        "args": [
+          "test"
+        ]
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
