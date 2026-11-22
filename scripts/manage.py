@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -99,19 +100,6 @@ def atomic_copy(source, target, executable=False):
             os.unlink(temporary)
 
 
-def atomic_text(target, text, executable=False):
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".tcarkit-", dir=target.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(text)
-        os.chmod(temporary, 0o755 if executable else 0o644)
-        os.replace(temporary, target)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-
-
 def build(args):
     check_dependencies()
     build_root = ROOT / "build" / platform_name()
@@ -132,13 +120,88 @@ def build(args):
 
 
 def desktop_entry(binary, icon):
-    # Desktop Exec quoting is not shell quoting; escape percent field codes.
-    path = str(binary).replace("\\", "\\\\\\\\").replace('"', '\\\\"')
-    path = path.replace("`", "\\\\`").replace("$", "\\\\$").replace("%", "%%")
+    def value(path):
+        return str(path).replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+
+    path = str(binary)
+    if re.fullmatch(r"[/A-Za-z0-9_.:@+-]+", path):
+        command = path
+    else:
+        # Some desktop consumers keep quotes in the first executable token.
+        # Use an unquoted env executable and quote only its path argument.
+        env = shutil.which("env")
+        if not env:
+            raise RuntimeError("env is required to install a launcher in a path with special characters")
+        escaped = path.replace("\\", "\\\\\\\\").replace('"', '\\\\"')
+        escaped = escaped.replace("`", "\\\\`").replace("$", "\\\\$").replace("%", "%%")
+        command = f'{env} "{escaped}"'
     return ("[Desktop Entry]\nVersion=1.0\nType=Application\nName=tCarKit\n"
             "Comment=tCar desktop controller\n"
-            f'Exec="{path}"\nPath={binary.parent}\nIcon={icon}\n'
-            "Terminal=false\nStartupNotify=false\nStartupWMClass=tCarKit\nCategories=Utility;\n")
+            f'Exec={command}\nTryExec={value(binary)}\nPath={value(binary.parent)}\nIcon={value(icon)}\n'
+            "Terminal=false\nStartupNotify=false\nStartupWMClass=tCarKit\n"
+            "NoDisplay=false\nHidden=false\nCategories=Utility;\nKeywords=tCar;tCarKit;\n")
+
+
+def linux_desktop_directory():
+    if shutil.which("xdg-user-dir"):
+        result = subprocess.run(["xdg-user-dir", "DESKTOP"], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            return Path(result.stdout.strip())
+    return Path.home() / "Desktop"
+
+
+def is_tcarkit_launcher(path):
+    """Match our application, not unrelated launchers with a similar filename."""
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    return bool(re.search(r"^Name(?:\[[^\]]+\])?=tCarKit\s*$", content, re.MULTILINE)
+                or re.search(r"^StartupWMClass=tCarKit\s*$", content, re.MULTILINE))
+
+
+def write_desktop_launcher(target, entry, executable=False):
+    # Update existing files in place so desktop directory monitors see a
+    # content change, rather than relying on temporary-file rename events.
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_symlink():
+        target.unlink()
+    target.write_text(entry, encoding="utf-8", newline="\n")
+    target.chmod(0o755 if executable else 0o644)
+
+
+def install_linux_launchers(binary, icon, applications, desktop, create_desktop):
+    entry = desktop_entry(binary, icon)
+    canonical = applications / "tcarkit.desktop"
+    desktop_shortcut = desktop / "tcarkit.desktop"
+    had_desktop = False
+    # Remove duplicate IDs left by former installs, but only when their
+    # contents identify this app. Keep canonical files for in-place updates.
+    for directory in {applications, Path.home() / ".local/share/applications", desktop}:
+        if not directory.is_dir():
+            continue
+        for path in directory.glob("*.desktop"):
+            if not is_tcarkit_launcher(path):
+                continue
+            if directory == desktop:
+                had_desktop = True
+            if path not in (canonical, desktop_shortcut):
+                path.unlink()
+                print(f"[INFO] Removed duplicate tCarKit launcher: {path}")
+    write_desktop_launcher(canonical, entry)
+    if create_desktop or had_desktop or desktop_shortcut.exists():
+        write_desktop_launcher(desktop_shortcut, entry, executable=True)
+        if shutil.which("gio"):
+            result = subprocess.run(["gio", "set", str(desktop_shortcut), "metadata::trusted", "true"], check=False)
+            if result.returncode:
+                print("[WARN] Desktop shortcut needs manual 'Allow Launching'.", file=sys.stderr)
+    if shutil.which("desktop-file-validate"):
+        subprocess.run(["desktop-file-validate", str(canonical)], check=True)
+    if shutil.which("update-desktop-database"):
+        subprocess.run(["update-desktop-database", str(applications)], check=True)
+    # Explicit metadata change after index update prompts menu watchers too.
+    canonical.touch()
+    print(f"[OK] Applications menu: {canonical}")
 
 
 def install(args):
@@ -146,7 +209,9 @@ def install(args):
     if not source.is_file():
         raise RuntimeError("No native executable found. Run Build first.")
     if platform_name() == "linux":
-        data = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
+        data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+        if not data.is_absolute():
+            raise RuntimeError("XDG_DATA_HOME must be an absolute path")
         target_dir = data / "tcarkit"
     else:
         target_dir = Path(os.environ["LOCALAPPDATA"]) / "Programs" / "tCarKit"
@@ -157,20 +222,7 @@ def install(args):
     atomic_copy(ROOT / "src/tcarkit/metadata.json", target_dir / "metadata.json")
     if platform_name() == "linux":
         applications = data / "applications"
-        entry = desktop_entry(binary, icon)
-        atomic_text(applications / "tcarkit.desktop", entry)
-        desktop = Path.home() / "Desktop"
-        if shutil.which("xdg-user-dir"):
-            result = subprocess.run(["xdg-user-dir", "DESKTOP"], capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout.strip():
-                desktop = Path(result.stdout.strip())
-        if args.desktop or (desktop / "tcarkit.desktop").exists():
-            shortcut = desktop / "tcarkit.desktop"
-            atomic_text(shortcut, entry, executable=True)
-            if shutil.which("gio"):
-                subprocess.run(["gio", "set", str(shortcut), "metadata::trusted", "true"], check=False)
-        if shutil.which("update-desktop-database"):
-            subprocess.run(["update-desktop-database", str(applications)], check=True)
+        install_linux_launchers(binary, icon, applications, linux_desktop_directory(), args.desktop)
     else:
         # Pass paths in environment variables, never interpolate them as
         # PowerShell code. WScript writes standard Start Menu/Desktop links.

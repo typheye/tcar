@@ -57,7 +57,12 @@ Categories=Utility;
 
 StartupNotify=false 避免 GNOME 将启动中的窗口长时间标记为 STARTING。
 Windows 使用 WScript.Shell 创建标准开始菜单/桌面 .lnk。
-安装和刷新桌面条目采用同目录临时文件替换，旧安装的可执行文件不受 Clean 影响。
+可执行文件采用同目录临时文件替换。Linux 桌面条目更新时原位写入，以便桌面
+目录监视器识别内容变化；安装时刷新索引并校验条目（工具可用时）。普通路径的
+Exec 不加引号，包含特殊字符时使用 env 加路径参数，并添加 TryExec。
+安装清理确认属于 tCarKit 的旧版重复条目，不修改其他应用的启动项。
+VS Code Install 默认包含 --desktop，创建应用菜单项与桌面快捷方式。
+旧安装的可执行文件不受 Clean 影响。
 
 ## OOBE 与传感器
 
@@ -81,6 +86,5 @@ Linux 本机测试不能代替 Windows 原生窗口、打包和 EXE 启动验证
 ## 迁移与 Git
 
 此目录由 linux-pc 整体移动而来，.git 和原有提交历史完整保留，工作分支 pc-app。
-旧 win-pc 保留为只读历史参考，不再同步功能。迁移机器的 linux-pc 符号链接
-只用于兼容本地旧路径，新开发、任务与文档均使用 pc-app。
+旧 linux-pc / win-pc 目录及兼容链接已移除，开发、任务与安装均使用 pc-app。
 不要把旧 Windows 业务页面反向覆盖到共享源码。

@@ -93,19 +93,21 @@
       "label": "Install",
       "icon": {
         "id": "rocket",
-        "tooltip": "安装 tCarKit 并更新启动项"
+        "tooltip": "安装 tCarKit，创建应用菜单和桌面快捷方式"
       },
-      "detail": "Install executable and application launcher",
+      "detail": "Install executable, application menu entry and desktop shortcut",
       "type": "shell",
       "command": "bash",
       "args": [
         "${workspaceFolder}/scripts/pc.sh",
-        "install"
+        "install",
+        "--desktop"
       ],
       "windows": {
         "command": "${workspaceFolder}\\scripts\\pc.cmd",
         "args": [
-          "install"
+          "install",
+          "--desktop"
         ]
       },
       "options": {

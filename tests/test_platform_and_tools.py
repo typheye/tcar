@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -111,14 +112,75 @@ class ToolTests(unittest.TestCase):
         (assets / "favicon.ico").write_bytes(b"icon")
         (assets.parent / "metadata.json").write_text('{}')
         data = self.root / "xdg data"
-        with patch.dict(os.environ, {"XDG_DATA_HOME": str(data)}), patch.object(manage.shutil, "which", return_value=None), patch.object(manage.Path, "home", return_value=self.root):
+        with patch.dict(os.environ, {"XDG_DATA_HOME": str(data)}), patch.object(manage.shutil, "which", side_effect=lambda name: "/usr/bin/env" if name == "env" else None), patch.object(manage.Path, "home", return_value=self.root):
             manage.install(argparse.Namespace(desktop=True))
         entry = (data / "applications/tcarkit.desktop").read_text()
-        self.assertIn(f'Exec="{data / "tcarkit/tCarKit"}"', entry)
+        self.assertIn(f'Exec=/usr/bin/env "{data / "tcarkit/tCarKit"}"', entry)
+        self.assertIn(f'TryExec={data / "tcarkit/tCarKit"}', entry)
         self.assertIn("StartupNotify=false", entry)
         manage.clean(argparse.Namespace(all=True))
         self.assertTrue((data / "tcarkit/tCarKit").is_file())
         self.assertEqual((self.root / "Desktop/tcarkit.desktop").read_text(), entry)
+
+    def test_linux_launcher_updates_in_place_and_cleans_only_our_duplicates(self):
+        data, desktop = self.root / "data", self.root / "Desktop"
+        applications = data / "applications"
+        applications.mkdir(parents=True)
+        desktop.mkdir()
+        canonical = applications / "tcarkit.desktop"
+        old = '[Desktop Entry]\nName=tCarKit\nExec=/deleted/linux-pc/dist/tCarKit\n'
+        canonical.write_text(old)
+        inode = canonical.stat().st_ino
+        duplicate = applications / "old-tCarKit.desktop"
+        duplicate.write_text(old)
+        (desktop / "old-tCarKit.desktop").write_text(old)
+        unrelated = applications / "other.desktop"
+        unrelated.write_text('[Desktop Entry]\nName=Another app\nExec=/usr/bin/true\n')
+        with patch.object(manage.shutil, "which", side_effect=lambda name: "/usr/bin/env" if name == "env" else None), patch.object(manage.Path, "home", return_value=self.root):
+            manage.install_linux_launchers(data / "tcarkit/tCarKit", data / "tcarkit/favicon.ico", applications, desktop, False)
+        self.assertEqual(canonical.stat().st_ino, inode)
+        self.assertFalse(duplicate.exists())
+        self.assertFalse((desktop / "old-tCarKit.desktop").exists())
+        self.assertTrue((desktop / "tcarkit.desktop").exists())
+        self.assertTrue(unrelated.exists())
+        self.assertNotIn('Exec="', canonical.read_text())
+        self.assertNotIn('linux-pc', canonical.read_text())
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux GIO desktop parsing")
+    def test_gio_resolves_and_launches_generated_desktop_entries(self):
+        python = Path('/usr/bin/python3')
+        probe = subprocess.run([str(python), '-c', 'from gi.repository import Gio, GLib'], capture_output=True) if python.exists() else None
+        if probe is None or probe.returncode:
+            self.skipTest('system Python GIO bindings unavailable')
+        paths = tempfile.TemporaryDirectory(prefix='tcarkit-gio-')
+        self.addCleanup(paths.cleanup)
+        check = '''
+import sys
+from gi.repository import Gio, GLib
+app = Gio.DesktopAppInfo.new_from_filename(sys.argv[1])
+assert app.should_show()
+assert GLib.find_program_in_path(app.get_executable()), repr(app.get_executable())
+assert app.launch([], None)
+'''
+        for name in ('plain', 'with spaces', 'with "quote" and $dollar and %percent'):
+            folder = Path(paths.name) / name
+            folder.mkdir()
+            marker = folder / 'launched'
+            binary = folder / 'tCarKit'
+            binary.write_text('#!/usr/bin/env python3\nfrom pathlib import Path\nPath(__file__).with_name("launched").touch()\n')
+            binary.chmod(0o755)
+            launcher = folder / 'tcarkit.desktop'
+            launcher.write_text(manage.desktop_entry(binary, folder / 'icon.ico'))
+            result = subprocess.run([str(python), '-c', check, str(launcher)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            import time
+            deadline = time.monotonic() + 3
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertTrue(marker.exists(), f'launcher did not execute {binary}')
+            if shutil.which('desktop-file-validate'):
+                result = subprocess.run(['desktop-file-validate', str(launcher)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_windows_install_shortcut_paths_are_not_code(self):
         (self.root / "dist").mkdir()
@@ -183,7 +245,9 @@ apply_theme(app, THEME_LIGHT)
         tasks = json.loads((PROJECT / ".vscode/tasks.json").read_text())["tasks"]
         self.assertEqual({t["label"] for t in tasks}, {"Setup", "Play", "Build", "Install", "Clean", "Test"})
         for task in tasks:
-            self.assertEqual(task["args"][-1], task["windows"]["args"][-1])
+            self.assertEqual(task["args"][1:], task["windows"]["args"])
+            self.assertTrue(task["icon"]["id"])
+            self.assertTrue(task["icon"]["tooltip"])
             self.assertNotIn("Administrator", str(task))
 
 
